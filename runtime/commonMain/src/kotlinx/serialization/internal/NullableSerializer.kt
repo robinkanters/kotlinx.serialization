@@ -1,39 +1,33 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
-
 package kotlinx.serialization.internal
 
 import kotlinx.serialization.*
-import kotlin.reflect.KClass
 
-fun <T : Any> makeNullable(actualSerializer: KSerializer<T>): KSerializer<T?> = NullableSerializer(actualSerializer)
+@Deprecated(
+    message = "Deprecated in the favor of extension",
+    level = DeprecationLevel.ERROR,
+    replaceWith = ReplaceWith("actualSerializer.nullable)")
+)
+@InternalSerializationApi
+public fun <T : Any> makeNullable(actualSerializer: KSerializer<T>): KSerializer<T?> {
+    return NullableSerializer(actualSerializer)
+}
 
-class NullableSerializer<T : Any>(public val actualSerializer: KSerializer<T>) : KSerializer<T?> {
-    private class SerialDescriptorForNullable(val original: SerialDescriptor): SerialDescriptor by original {
-        override val isNullable: Boolean
-            get() = true
+/**
+ * Use [KSerializer.nullable][nullable] instead.
+ * @suppress internal API
+ */
+@InternalSerializationApi
+public class NullableSerializer<T : Any>(private val serializer: KSerializer<T>) : KSerializer<T?> {
 
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (other !is SerialDescriptorForNullable) return false
+    override val descriptor: SerialDescriptor = SerialDescriptorForNullable(serializer.descriptor)
 
-            if (original != other.original) return false
-
-            return true
-        }
-
-        override fun hashCode(): Int {
-            return original.hashCode() * 31
-        }
-    }
-
-    override val descriptor: SerialDescriptor = SerialDescriptorForNullable(actualSerializer.descriptor)
-
-    override fun serialize(encoder: Encoder, obj: T?) {
-        if (obj != null) {
+    override fun serialize(encoder: Encoder, value: T?) {
+        if (value != null) {
             encoder.encodeNotNullMark()
-            encoder.encodeSerializableValue(actualSerializer, obj)
+            encoder.encodeSerializableValue(serializer, value)
         }
         else {
             encoder.encodeNull()
@@ -41,14 +35,47 @@ class NullableSerializer<T : Any>(public val actualSerializer: KSerializer<T>) :
     }
 
     override fun deserialize(decoder: Decoder): T? {
-        return if (decoder.decodeNotNullMark()) decoder.decodeSerializableValue(actualSerializer) else decoder.decodeNull()
+        return if (decoder.decodeNotNullMark()) decoder.decodeSerializableValue(serializer) else decoder.decodeNull()
     }
 
     override fun patch(decoder: Decoder, old: T?): T? {
         return when {
             old == null -> deserialize(decoder)
-            decoder.decodeNotNullMark() -> decoder.updateSerializableValue(actualSerializer, old)
+            decoder.decodeNotNullMark() -> decoder.updateSerializableValue(serializer, old)
             else -> decoder.decodeNull().let { old }
         }
+    }
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other == null || this::class != other::class) return false
+        other as NullableSerializer<*>
+        if (serializer != other.serializer) return false
+        return true
+    }
+
+    override fun hashCode(): Int {
+        return serializer.hashCode()
+    }
+}
+
+internal class SerialDescriptorForNullable(private val original: SerialDescriptor): SerialDescriptor by original {
+    override val serialName: String = original.serialName + "?"
+    override val isNullable: Boolean
+        get() = true
+
+    override fun equals(other: Any?): Boolean {
+        if (this === other) return true
+        if (other !is SerialDescriptorForNullable) return false
+        if (original != other.original) return false
+        return true
+    }
+
+    override fun toString(): String {
+        return "$original?"
+    }
+
+    override fun hashCode(): Int {
+        return original.hashCode() * 31
     }
 }

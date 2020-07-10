@@ -1,7 +1,10 @@
+/*
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package kotlinx.serialization.features
 
 import kotlinx.serialization.*
-import kotlinx.serialization.internal.StringDescriptor
 import kotlinx.serialization.json.Json
 import org.junit.Test
 import java.text.DateFormat
@@ -11,15 +14,15 @@ import kotlin.test.assertEquals
 
 @Serializer(forClass = Date::class)
 object DateSerializer : KSerializer<Date> {
-    override val descriptor: SerialDescriptor = StringDescriptor
+    override val descriptor: SerialDescriptor = PrimitiveDescriptor("java.util.Date", PrimitiveKind.STRING)
 
     // Consider wrapping in ThreadLocal if serialization may happen in multiple threads
     private val df: DateFormat = SimpleDateFormat("dd/MM/yyyy HH:mm:ss.SSS").apply {
         timeZone = TimeZone.getTimeZone("GMT+2")
     }
 
-    override fun serialize(encoder: Encoder, obj: Date) {
-        encoder.encodeString(df.format(obj))
+    override fun serialize(encoder: Encoder, value: Date) {
+        encoder.encodeString(df.format(value))
     }
 
     override fun deserialize(decoder: Decoder): Date {

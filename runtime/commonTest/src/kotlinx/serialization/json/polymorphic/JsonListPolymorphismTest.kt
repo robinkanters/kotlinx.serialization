@@ -4,9 +4,11 @@
 
 package kotlinx.serialization.json.polymorphic
 
-import kotlinx.serialization.*
-import kotlinx.serialization.json.*
-import kotlin.test.*
+import kotlinx.serialization.Polymorphic
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.JsonTestBase
+import kotlin.test.Test
+import kotlin.test.assertFails
 
 class JsonListPolymorphismTest : JsonTestBase() {
 
@@ -14,31 +16,31 @@ class JsonListPolymorphismTest : JsonTestBase() {
     internal data class ListWrapper(val list: List<@Polymorphic InnerBase>)
 
     @Test
-    fun testPolymorphicValues() = parametrizedTest(
+    fun testPolymorphicValues() = assertJsonFormAndRestored(
         ListWrapper.serializer(),
         ListWrapper(listOf(InnerImpl(1), InnerImpl2(2))),
         "{list:[" +
                 "{type:kotlinx.serialization.json.polymorphic.InnerImpl,field:1,str:default,nullable:null}," +
                 "{type:kotlinx.serialization.json.polymorphic.InnerImpl2,field:2}]}",
-        polymorphicJson)
+        polymorphicRelaxedJson)
 
     @Serializable
     internal data class ListNullableWrapper(val list: List<@Polymorphic InnerBase?>)
 
     @Test
-    fun testPolymorphicNullableValues() = parametrizedTest(
+    fun testPolymorphicNullableValues() = assertJsonFormAndRestored(
         ListNullableWrapper.serializer(),
         ListNullableWrapper(listOf(InnerImpl(1), null)),
         "{list:[" +
                 "{type:kotlinx.serialization.json.polymorphic.InnerImpl,field:1,str:default,nullable:null}," +
                 "null]}",
-        polymorphicJson)
+        polymorphicRelaxedJson)
 
     @Test
     fun testPolymorphicNullableValuesWithNonNullSerializerFails() =
         parametrizedTest { useStreaming ->
             val wrapper = ListNullableWrapper(listOf(InnerImpl(1), null))
-            val serialized = polymorphicJson.stringify(ListNullableWrapper.serializer(), wrapper, useStreaming)
-            assertFails { polymorphicJson.parse(ListWrapper.serializer(), serialized, useStreaming) }
+            val serialized = polymorphicRelaxedJson.stringify(ListNullableWrapper.serializer(), wrapper, useStreaming)
+            assertFails { polymorphicRelaxedJson.parse(ListWrapper.serializer(), serialized, useStreaming) }
         }
 }

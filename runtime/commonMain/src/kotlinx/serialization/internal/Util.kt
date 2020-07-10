@@ -1,60 +1,37 @@
 /*
- * Copyright 2017 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.internal
 
-import kotlinx.io.ByteBuffer
-import kotlinx.io.IOException
-import kotlinx.io.InputStream
+import kotlinx.io.*
+import kotlinx.serialization.*
 
-internal fun InputStream.readExactNBytes(bytes: Int): ByteArray {
+@InternalSerializationApi
+public fun InputStream.readExactNBytes(bytes: Int): ByteArray {
     val array = ByteArray(bytes)
     var read = 0
     while (read < bytes) {
         val i = this.read(array, read, bytes - read)
-        if (i == -1) throw IOException("Unexpected EOF")
+        if (i == -1) error("Unexpected EOF")
         read += i
     }
     return array
 }
 
-internal fun InputStream.readToByteBuffer(bytes: Int): ByteBuffer {
-    val arr = readExactNBytes(bytes)
-    val buf = ByteBuffer.allocate(bytes)
-    buf.put(arr).flip()
-    return buf
-}
+internal object InternalHexConverter {
+    private const val hexCode = "0123456789ABCDEF"
 
-object HexConverter {
     fun parseHexBinary(s: String): ByteArray {
         val len = s.length
-
-        if (len % 2 != 0) {
-            throw IllegalArgumentException("HexBinary string must be even length")
-        }
-
+        require(len % 2 == 0) { "HexBinary string must be even length" }
         val bytes = ByteArray(len / 2)
         var i = 0
 
         while (i < len) {
             val h = hexToInt(s[i])
             val l = hexToInt(s[i + 1])
-            if (h == -1 || l == -1) {
-                throw IllegalArgumentException("Invalid hex chars: ${s[i]}${s[i+1]}")
-            }
+            require(!(h == -1 || l == -1)) { "Invalid hex chars: ${s[i]}${s[i+1]}" }
 
             bytes[i / 2] = ((h shl 4) + l).toByte()
             i += 2
@@ -70,8 +47,6 @@ object HexConverter {
         else -> -1
     }
 
-    private const val hexCode = "0123456789ABCDEF"
-
     fun printHexBinary(data: ByteArray, lowerCase: Boolean = false): String {
         val r = StringBuilder(data.size * 2)
         for (b in data) {
@@ -81,10 +56,60 @@ object HexConverter {
         return if (lowerCase) r.toString().toLowerCase() else r.toString()
     }
 
-    fun toHexString(n: Int) = printHexBinary(ByteBuffer.allocate(4).putInt(n).flip().array(), true)
-            .trimStart('0').takeIf { it.isNotEmpty() } ?: "0"
+    fun toHexString(n: Int): String {
+        val arr = ByteArray(4)
+        for (i in 0 until 4) {
+            arr[i] = (n shr (24 - i * 8)).toByte()
+        }
+        return printHexBinary(arr, true).trimStart('0').takeIf { it.isNotEmpty() } ?: "0"
+    }
 }
 
-fun ByteBuffer.getUnsignedByte(): Int = this.get().toInt() and 0xff
-fun ByteBuffer.getUnsignedShort(): Int = this.getShort().toInt() and 0xffff
-fun ByteBuffer.getUnsignedInt(): Long = this.getInt().toLong() and 0xffffffffL
+@InternalSerializationApi
+@Deprecated(
+    level = DeprecationLevel.WARNING,
+    message = "HexConverter slipped into public API surface accidentally and will be removed in the future releases. " +
+            "You can copy-paste it to your project or (better) find a polished implementation that initially was intended for public uses."
+)
+object HexConverter {
+    private const val hexCode = "0123456789ABCDEF"
+    fun parseHexBinary(s: String): ByteArray = InternalHexConverter.parseHexBinary(s)
+    fun printHexBinary(data: ByteArray, lowerCase: Boolean = false): String = InternalHexConverter.printHexBinary(data, lowerCase)
+    fun toHexString(n: Int): String = InternalHexConverter.toHexString(n)
+}
+
+internal fun SerialDescriptor.cachedSerialNames(): Set<String> {
+    @Suppress("DEPRECATION_ERROR")
+    if (this is PluginGeneratedSerialDescriptor) return namesSet
+    val result = HashSet<String>(elementsCount)
+    for (i in 0 until elementsCount) {
+        result += getElementName(i)
+    }
+    return result
+}
+
+/**
+ * Returns serial descriptor that delegates all the calls to descriptor returned by [deferred] block.
+ * Used to resolve cyclic dependencies between recursive serializable structures.
+ */
+internal fun defer(deferred: () -> SerialDescriptor): SerialDescriptor = object : SerialDescriptor {
+
+    private val original: SerialDescriptor by lazy(deferred)
+
+    override val serialName: String
+        get() = original.serialName
+    override val kind: SerialKind
+        get() = original.kind
+    override val elementsCount: Int
+        get() = original.elementsCount
+
+    override fun getElementName(index: Int): String = original.getElementName(index)
+    override fun getElementIndex(name: String): Int = original.getElementIndex(name)
+    override fun getElementAnnotations(index: Int): List<Annotation> = original.getElementAnnotations(index)
+    override fun getElementDescriptor(index: Int): SerialDescriptor = original.getElementDescriptor(index)
+    override fun isElementOptional(index: Int): Boolean = original.isElementOptional(index)
+}
+
+@Suppress("UNCHECKED_CAST", "NOTHING_TO_INLINE")
+@PublishedApi
+internal inline fun <T> KSerializer<*>.cast(): KSerializer<T> = this as KSerializer<T>

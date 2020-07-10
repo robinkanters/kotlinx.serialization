@@ -1,10 +1,11 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.json
 
 import kotlinx.serialization.*
+import kotlinx.serialization.builtins.*
 import kotlinx.serialization.internal.*
 
 /**
@@ -14,29 +15,34 @@ import kotlinx.serialization.internal.*
  *
  * Example usage:
  * ```
- *   val string = Json.stringify(JsonElementSerializer, json { "key" to 1.0 })
- *   val literal = Json.parse(JsonElementSerializer, string)
- *   assertEquals(JsonObject(mapOf("key" to JsonLiteral(1.0))), literal)
+ * val string = Json.stringify(JsonElementSerializer, json { "key" to 1.0 })
+ * val literal = Json.parse(JsonElementSerializer, string)
+ * assertEquals(JsonObject(mapOf("key" to JsonLiteral(1.0))), literal)
  * ```
  */
 @Serializer(forClass = JsonElement::class)
 public object JsonElementSerializer : KSerializer<JsonElement> {
-    override val descriptor: SerialDescriptor = object : SerialClassDescImpl("JsonElementSerializer") {
-        override val kind: SerialKind get() = UnionKind.SEALED
-    }
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("kotlinx.serialization.json.JsonElement", PolymorphicKind.SEALED) {
+            // Resolve cyclic dependency in descriptors by late binding
+            element("JsonPrimitive", defer { JsonPrimitiveSerializer.descriptor })
+            element("JsonNull", defer { JsonNullSerializer.descriptor })
+            element("JsonLiteral", defer { JsonLiteralSerializer.descriptor })
+            element("JsonObject", defer { JsonObjectSerializer.descriptor })
+            element("JsonArray", defer { JsonArraySerializer.descriptor })
+        }
 
-    override fun serialize(encoder: Encoder, obj: JsonElement) {
+    override fun serialize(encoder: Encoder, value: JsonElement) {
         verify(encoder)
-        when (obj) {
-            is JsonPrimitive -> encoder.encodeSerializableValue(JsonPrimitiveSerializer, obj)
-            is JsonObject -> encoder.encodeSerializableValue(JsonObjectSerializer, obj)
-            is JsonArray -> encoder.encodeSerializableValue(JsonArraySerializer, obj)
+        when (value) {
+            is JsonPrimitive -> encoder.encodeSerializableValue(JsonPrimitiveSerializer, value)
+            is JsonObject -> encoder.encodeSerializableValue(JsonObjectSerializer, value)
+            is JsonArray -> encoder.encodeSerializableValue(JsonArraySerializer, value)
         }
     }
 
     override fun deserialize(decoder: Decoder): JsonElement {
-        verify(decoder)
-        val input = decoder as JsonInput
+        val input = decoder.asJsonInput()
         return input.decodeJson()
     }
 }
@@ -47,26 +53,22 @@ public object JsonElementSerializer : KSerializer<JsonElement> {
  */
 @Serializer(forClass = JsonPrimitive::class)
 public object JsonPrimitiveSerializer : KSerializer<JsonPrimitive> {
-    override val descriptor: SerialDescriptor get() = JsonPrimitiveDescriptor
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("kotlinx.serialization.json.JsonPrimitive", PrimitiveKind.STRING)
 
-    override fun serialize(encoder: Encoder, obj: JsonPrimitive) {
+    override fun serialize(encoder: Encoder, value: JsonPrimitive) {
         verify(encoder)
-        return if (obj is JsonNull) {
+        return if (value is JsonNull) {
             encoder.encodeSerializableValue(JsonNullSerializer, JsonNull)
         } else {
-            encoder.encodeSerializableValue(JsonLiteralSerializer, obj as JsonLiteral)
+            encoder.encodeSerializableValue(JsonLiteralSerializer, value as JsonLiteral)
         }
     }
 
     override fun deserialize(decoder: Decoder): JsonPrimitive {
-        verify(decoder)
-        return if (decoder.decodeNotNullMark()) JsonPrimitive(decoder.decodeString())
-        else decoder.decodeSerializableValue(JsonNullSerializer)
-    }
-
-    private object JsonPrimitiveDescriptor : SerialClassDescImpl("JsonPrimitive") {
-        override val kind: SerialKind
-            get() = PrimitiveKind.STRING
+        val result = decoder.asJsonInput().decodeJson()
+        if (result !is JsonPrimitive) throw JsonDecodingException(-1, "Unexpected JSON element, expected JsonPrimitive, had ${result::class}", result.toString())
+        return result
     }
 }
 
@@ -76,9 +78,11 @@ public object JsonPrimitiveSerializer : KSerializer<JsonPrimitive> {
  */
 @Serializer(forClass = JsonNull::class)
 public object JsonNullSerializer : KSerializer<JsonNull> {
-    override val descriptor: SerialDescriptor get() = JsonNullDescriptor
+    // technically, JsonNull is an object, but it does not call beginStructure/endStructure at all
+    override val descriptor: SerialDescriptor =
+        SerialDescriptor("kotlinx.serialization.json.JsonNull", UnionKind.ENUM_KIND)
 
-    override fun serialize(encoder: Encoder, obj: JsonNull) {
+    override fun serialize(encoder: Encoder, value: JsonNull) {
         verify(encoder)
         encoder.encodeNull()
     }
@@ -87,11 +91,6 @@ public object JsonNullSerializer : KSerializer<JsonNull> {
         verify(decoder)
         decoder.decodeNull()
         return JsonNull
-    }
-
-    private object JsonNullDescriptor : SerialClassDescImpl("JsonNull") {
-        // technically, JsonNull is an object, but it does not call beginStructure/endStructure
-        override val kind: SerialKind get() = UnionKind.ENUM_KIND
     }
 }
 
@@ -102,40 +101,36 @@ public object JsonNullSerializer : KSerializer<JsonNull> {
 @Serializer(forClass = JsonLiteral::class)
 public object JsonLiteralSerializer : KSerializer<JsonLiteral> {
 
-    override val descriptor: SerialDescriptor get() = JsonLiteralDescriptor
+    override val descriptor: SerialDescriptor =
+        PrimitiveDescriptor("kotlinx.serialization.json.JsonLiteral", PrimitiveKind.STRING)
 
-    override fun serialize(encoder: Encoder, obj: JsonLiteral) {
+    override fun serialize(encoder: Encoder, value: JsonLiteral) {
         verify(encoder)
-        if (obj.isString) {
-            return encoder.encodeString(obj.content)
+        if (value.isString) {
+            return encoder.encodeString(value.content)
         }
 
-        val long = obj.longOrNull
+        val long = value.longOrNull
         if (long != null) {
             return encoder.encodeLong(long)
         }
 
-        val double = obj.doubleOrNull
+        val double = value.doubleOrNull
         if (double != null) {
             return encoder.encodeDouble(double)
         }
 
-        val boolean = obj.booleanOrNull
+        val boolean = value.booleanOrNull
         if (boolean != null) {
             return encoder.encodeBoolean(boolean)
         }
-
-        encoder.encodeString(obj.content)
+        encoder.encodeString(value.content)
     }
 
     override fun deserialize(decoder: Decoder): JsonLiteral {
-        verify(decoder)
-        return JsonLiteral(decoder.decodeString())
-    }
-
-    private object JsonLiteralDescriptor : SerialClassDescImpl("JsonLiteral") {
-        override val kind: SerialKind
-            get() = PrimitiveKind.STRING
+        val result = decoder.asJsonInput().decodeJson()
+        if (result !is JsonLiteral) throw JsonDecodingException(-1, "Unexpected JSON element, expected JsonLiteral, had ${result::class}", result.toString())
+        return result
     }
 }
 
@@ -146,16 +141,20 @@ public object JsonLiteralSerializer : KSerializer<JsonLiteral> {
 @Serializer(forClass = JsonObject::class)
 public object JsonObjectSerializer : KSerializer<JsonObject> {
     override val descriptor: SerialDescriptor =
-        NamedMapClassDescriptor("JsonObject", StringSerializer.descriptor, JsonElementSerializer.descriptor)
+        NamedMapClassDescriptor(
+            "kotlinx.serialization.json.JsonObject",
+            String.serializer().descriptor,
+            JsonElementSerializer.descriptor
+        )
 
-    override fun serialize(encoder: Encoder, obj: JsonObject) {
+    override fun serialize(encoder: Encoder, value: JsonObject) {
         verify(encoder)
-        LinkedHashMapSerializer(StringSerializer, JsonElementSerializer).serialize(encoder, obj.content)
+        MapSerializer(String.serializer(), JsonElementSerializer).serialize(encoder, value.content)
     }
 
     override fun deserialize(decoder: Decoder): JsonObject {
         verify(decoder)
-        return JsonObject(LinkedHashMapSerializer(StringSerializer, JsonElementSerializer).deserialize(decoder))
+        return JsonObject(MapSerializer(String.serializer(), JsonElementSerializer).deserialize(decoder))
     }
 }
 
@@ -166,24 +165,38 @@ public object JsonObjectSerializer : KSerializer<JsonObject> {
 @Serializer(forClass = JsonArray::class)
 public object JsonArraySerializer : KSerializer<JsonArray> {
 
-    override val descriptor: SerialDescriptor = NamedListClassDescriptor("JsonArray",
-        JsonElementSerializer.descriptor)
+    override val descriptor: SerialDescriptor = NamedListClassDescriptor(
+        "kotlinx.serialization.json.JsonArray",
+        JsonElementSerializer.descriptor
+    )
 
-    override fun serialize(encoder: Encoder, obj: JsonArray) {
+    override fun serialize(encoder: Encoder, value: JsonArray) {
         verify(encoder)
-        ArrayListSerializer(JsonElementSerializer).serialize(encoder, obj)
+        ListSerializer(JsonElementSerializer).serialize(encoder, value)
     }
 
     override fun deserialize(decoder: Decoder): JsonArray {
         verify(decoder)
-        return JsonArray(ArrayListSerializer(JsonElementSerializer).deserialize(decoder))
+        return JsonArray(ListSerializer(JsonElementSerializer).deserialize(decoder))
     }
 }
 
 private fun verify(encoder: Encoder) {
-    if (encoder !is JsonOutput) error("Json element serializer can be used only by Json format")
+    encoder.asJsonOutput()
 }
 
 private fun verify(decoder: Decoder) {
-    if (decoder !is JsonInput) error("Json element serializer can be used only by Json format")
+    decoder.asJsonInput()
 }
+
+internal fun Decoder.asJsonInput(): JsonInput = this as? JsonInput
+    ?: throw IllegalStateException(
+        "This serializer can be used only with Json format." +
+                "Expected Decoder to be JsonInput, got ${this::class}"
+    )
+
+internal fun Encoder.asJsonOutput() = this as? JsonOutput
+    ?: throw IllegalStateException(
+        "This serializer can be used only with Json format." +
+                "Expected Encoder to be JsonOutput, got ${this::class}"
+    )

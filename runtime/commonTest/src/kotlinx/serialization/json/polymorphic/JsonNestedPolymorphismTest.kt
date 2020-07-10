@@ -12,24 +12,25 @@ import kotlin.test.*
 class JsonNestedPolymorphismTest : JsonTestBase() {
 
     private val polymorphicJson = Json {
-        unquoted = true
+        unquotedPrint = true
+        isLenient = true
         serialModule = SerializersModule {
-        polymorphic(Any::class, InnerBase::class) {
-            addSubclass(InnerImpl.serializer())
-            addSubclass(InnerImpl2.serializer())
-        }
+            polymorphic(Any::class, InnerBase::class) {
+                subclass(InnerImpl.serializer())
+                subclass(InnerImpl2.serializer())
+            }
 
-        polymorphic(Any::class) {
-            addSubclass(OuterImpl.serializer())
+            polymorphic(Any::class) {
+                subclass(OuterImpl.serializer())
+            }
         }
-    }
     }
 
     @Serializable
     internal data class NestedGenericsList(val list: List<List<@Polymorphic Any>>)
 
     @Test
-    fun testAnyList() = parametrizedTest(
+    fun testAnyList() = assertJsonFormAndRestored(
         NestedGenericsList.serializer(),
         NestedGenericsList(listOf(listOf(InnerImpl(1)), listOf(InnerImpl(2)))),
         "{list:[[" +
@@ -41,7 +42,7 @@ class JsonNestedPolymorphismTest : JsonTestBase() {
     internal data class NestedGenericsMap(val list: Map<String, Map<String, @Polymorphic Any>>)
 
     @Test
-    fun testAnyMap() = parametrizedTest(
+    fun testAnyMap() = assertJsonFormAndRestored(
         NestedGenericsMap.serializer(),
         NestedGenericsMap(mapOf("k1" to mapOf("k1" to InnerImpl(1)))),
         "{list:{k1:{k1:{type:kotlinx.serialization.json.polymorphic.InnerImpl,field:1,str:default,nullable:null}}}}",
@@ -51,7 +52,7 @@ class JsonNestedPolymorphismTest : JsonTestBase() {
     internal data class AnyWrapper(@Polymorphic val any: Any)
 
     @Test
-    fun testAny() = parametrizedTest(
+    fun testAny() = assertJsonFormAndRestored(
         AnyWrapper.serializer(),
         AnyWrapper(OuterImpl(InnerImpl2(1), InnerImpl(2))),
         "{any:" +

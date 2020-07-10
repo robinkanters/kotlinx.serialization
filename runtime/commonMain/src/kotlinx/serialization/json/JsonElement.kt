@@ -1,12 +1,12 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
-@file:Suppress("RedundantVisibilityModifier")
+@file:Suppress("unused")
 
 package kotlinx.serialization.json
 
-import kotlinx.serialization.Serializable
+import kotlinx.serialization.*
 import kotlinx.serialization.json.internal.*
 
 /**
@@ -24,31 +24,31 @@ public sealed class JsonElement {
 
     /**
      * Convenience method to get current element as [JsonPrimitive]
-     * @throws JsonException is current element is not a [JsonPrimitive]
+     * @throws JsonException if current element is not a [JsonPrimitive]
      */
     public open val primitive: JsonPrimitive
-        get() = error("JsonLiteral")
+        get() = error("JsonPrimitive")
 
     /**
      * Convenience method to get current element as [JsonObject]
-     * @throws JsonException is current element is not a [JsonObject]
+     * @throws JsonException if current element is not a [JsonObject]
      */
     public open val jsonObject: JsonObject
         get() = error("JsonObject")
 
     /**
      * Convenience method to get current element as [JsonArray]
-     * @throws JsonException is current element is not a [JsonArray]
+     * @throws JsonException if current element is not a [JsonArray]
      */
     public open val jsonArray: JsonArray
         get() = error("JsonArray")
 
     /**
      * Convenience method to get current element as [JsonNull]
-     * @throws JsonException is current element is not a [JsonNull]
+     * @throws JsonException if current element is not a [JsonNull]
      */
     public open val jsonNull: JsonNull
-        get() = error("JsonPrimitive")
+        get() = error("JsonNull")
 
     /**
      * Checks whether current element is [JsonNull]
@@ -56,8 +56,16 @@ public sealed class JsonElement {
     public val isNull: Boolean
         get() = this === JsonNull
 
+    /**
+     * Checks whether element represents a [JsonObject] and contains given [key].
+     * Returns false if element is not a [JsonObject].
+     */
+    public operator fun contains(key: String): Boolean {
+        return this is JsonObject && key in this.content
+    }
+
     private fun error(element: String): Nothing =
-        throw JsonException("Element ${this::class.toString()} is not a $element")
+        throw JsonException("Element ${this::class} is not a $element")
 }
 
 /**

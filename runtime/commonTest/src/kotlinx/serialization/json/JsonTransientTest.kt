@@ -14,8 +14,6 @@ class JsonTransientTest : JsonTestBase() {
     @Serializable
     class Data(val a: Int = 0, @Transient var b: Int = 42, val e: Boolean = false) {
         var c = "Hello"
-
-        @Transient
         val d: String
             get() = "hello"
 
@@ -45,14 +43,14 @@ class JsonTransientTest : JsonTestBase() {
 
     @Test
     fun testMissingOptionals() = parametrizedTest { useStreaming ->
-        assertEquals(strict.parse(Data.serializer(), "{a:0,c:Hello}", useStreaming), Data())
-        assertEquals(strict.parse(Data.serializer(), "{a:0}", useStreaming), Data())
+        assertEquals(unquotedLenient.parse(Data.serializer(), "{a:0,c:Hello}", useStreaming), Data())
+        assertEquals(unquotedLenient.parse(Data.serializer(), "{a:0}", useStreaming), Data())
     }
 
     @Test
     fun testThrowTransient() = parametrizedTest { useStreaming ->
         assertFailsWith(JsonDecodingException::class) {
-            strict.parse(Data.serializer(), "{a:0,b:100500,c:Hello}", useStreaming)
+            default.parse(Data.serializer(), """{"a":0,"b":100500,"c":"Hello"}""", useStreaming)
         }
     }
 }

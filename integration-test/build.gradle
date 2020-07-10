@@ -1,3 +1,6 @@
+/*
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ */
 buildscript {
     ext.serialization_version = mainLibVersion
 
@@ -5,9 +8,6 @@ buildscript {
         mavenCentral()
         jcenter()
         maven { url "https://dl.bintray.com/jetbrains/kotlin-native-dependencies" }
-    }
-    dependencies {
-        classpath "com.moowork.gradle:gradle-node-plugin:$gradle_node_version"
     }
 }
 
@@ -36,6 +36,7 @@ kotlin {
     targets {
         fromPreset(presets.jvmWithJava, 'jvm')
         fromPreset(presets.js, 'js') {
+            nodejs {}
             configure([compilations.main, compilations.test]) {
                 tasks.getByName(compileKotlinTaskName).kotlinOptions {
                     sourceMap = true
@@ -56,6 +57,8 @@ kotlin {
             dependencies {
                 implementation kotlin('stdlib-common')
                 implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime-common:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-common:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-cbor-common:$serialization_version"
             }
         }
         commonTest {
@@ -68,6 +71,8 @@ kotlin {
             dependencies {
                 implementation kotlin('stdlib-jdk8')
                 implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-protobuf:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-cbor:$serialization_version"
                 implementation 'com.google.dagger:dagger:2.13'
             }
         }
@@ -81,6 +86,9 @@ kotlin {
             dependencies {
                 implementation kotlin('stdlib-js')
                 implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime-js:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-js:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-cbor-js:$serialization_version"
+
             }
         }
         jsTest {
@@ -91,6 +99,8 @@ kotlin {
         macosMain {
             dependencies {
                 implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime-native:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-cbor-native:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-native:$serialization_version"
             }
         }
         macosTest {}
@@ -98,6 +108,8 @@ kotlin {
             kotlin.srcDirs = ["src/macosMain/kotlin"]
             dependencies {
                 implementation "org.jetbrains.kotlinx:kotlinx-serialization-runtime-native:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-cbor-native:$serialization_version"
+                implementation "org.jetbrains.kotlinx:kotlinx-serialization-protobuf-native:$serialization_version"
             }
         }
         linuxTest {
@@ -114,8 +126,5 @@ kotlin {
 dependencies {
     kapt 'com.google.dagger:dagger-compiler:2.13'
 }
-
-apply from: rootProject.file('gradle/node-js.gradle')
-apply from: rootProject.file('gradle/test-mocha-js.gradle')
 
 task run dependsOn "check"

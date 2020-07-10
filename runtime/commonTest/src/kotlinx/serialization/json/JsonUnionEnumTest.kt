@@ -13,15 +13,15 @@ class JsonUnionEnumTest : JsonTestBase() {
     enum class SomeEnum { ALPHA, BETA, GAMMA }
 
     @Serializable
-    data class WithUnions(@SerialId(5) val s: String,
-                          @SerialId(6) val e: SomeEnum = SomeEnum.ALPHA,
-                          @SerialId(7) val i: Int = 42)
+    data class WithUnions(val s: String,
+                          val e: SomeEnum = SomeEnum.ALPHA,
+                          val i: Int = 42)
 
     @Test
     fun testEnum() = parametrizedTest { useStreaming ->
         val data = WithUnions("foo", SomeEnum.BETA)
-        val json = strict.stringify(WithUnions.serializer(), data, useStreaming)
-        val restored = strict.parse(WithUnions.serializer(), json, useStreaming)
+        val json = default.stringify(WithUnions.serializer(), data, useStreaming)
+        val restored = default.parse(WithUnions.serializer(), json, useStreaming)
         assertEquals(data, restored)
     }
 }

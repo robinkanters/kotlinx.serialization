@@ -1,23 +1,11 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization
 
 import kotlinx.serialization.modules.serializersModuleOf
-import kotlinx.serialization.internal.SerialClassDescImpl
+import kotlinx.serialization.json.JsonConfiguration
 import kotlin.test.*
 
 class DynamicParserTest {
@@ -63,19 +51,28 @@ class DynamicParserTest {
     data class NotDefault(val a: Int)
 
     object NDSerializer : KSerializer<NotDefault> {
-        override fun serialize(encoder: Encoder, obj: NotDefault) {
-            encoder.encodeInt(obj.a)
+        override val descriptor = SerialDescriptor("notDefault") {
+            element<Int>("a")
+        }
+
+        override fun serialize(encoder: Encoder, value: NotDefault) {
+            encoder.encodeInt(value.a)
         }
 
         override fun deserialize(decoder: Decoder): NotDefault {
             return NotDefault(decoder.decodeInt())
         }
-
-        override val descriptor = SerialClassDescImpl("notDefault")
     }
 
     @Serializable
     data class NDWrapper(@ContextualSerialization val data: NotDefault)
+
+    @Serializable
+    sealed class Sealed {
+        @Serializable
+        @SerialName("one")
+        data class One(val string: String) : Sealed()
+    }
 
     @Test
     fun dynamicSimpleTest() {
@@ -167,5 +164,32 @@ class DynamicParserTest {
         val deserializer = DynamicObjectParser(context = serializersModuleOf(NotDefault::class, NDSerializer))
         val dyn1 = js("({data: 42})")
         assertEquals(NDWrapper(NotDefault(42)), deserializer.parse(dyn1))
+    }
+
+    @Test
+    @Ignore
+    fun parsePolymorphicDefault() {
+        // TODO object-based polymorphic deserialization requires additional special handling
+        //  because the discriminator lives inside the same object which is also being decoded.
+
+        val dyn = js("""({type:"one",string:"value"})""")
+        val expected = Sealed.One("value")
+
+        val actual1 = DynamicObjectParser().parse(dyn, Sealed.serializer())
+        assertEquals(expected, actual1)
+
+        val p = DynamicObjectParser(configuration = JsonConfiguration())
+        val actual2 = p.parse(dyn, Sealed.serializer())
+        assertEquals(expected, actual2)
+    }
+
+    @Test
+    fun parsePolymorphicArray() {
+        val dyn = js("""(["one",{"string":"value"}])""")
+        val expected = Sealed.One("value")
+
+        val p = DynamicObjectParser(configuration = JsonConfiguration(useArrayPolymorphism = true))
+        val actual = p.parse(dyn, Sealed.serializer())
+        assertEquals(expected, actual)
     }
 }

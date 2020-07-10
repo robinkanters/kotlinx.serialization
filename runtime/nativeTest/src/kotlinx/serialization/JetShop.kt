@@ -1,3 +1,7 @@
+/*
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package kotlinx.serialization
 
 @Serializable
@@ -7,8 +11,8 @@ data class SimpleData(val foo: String, val bar: Int)
 
 @Serializable
 data class CityData(
-    @SerialId(1) val id: Int,
-    @SerialId(2) val name: String
+    @Id(1) val id: Int,
+    @Id(2) val name: String
 )
 
 @Serializable
@@ -27,8 +31,8 @@ data class StreetData2(
 
 @Serializable
 data class CountryData(
-    @SerialId(10) val name: String,
-    @SerialId(20) val cities: List<CityData> = emptyList()
+    @Id(10) val name: String,
+    @Id(20) val cities: List<CityData> = emptyList()
 )
 
 val russia = CountryData("Russia", listOf(

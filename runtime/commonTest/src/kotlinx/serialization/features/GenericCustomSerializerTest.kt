@@ -1,27 +1,14 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.features
 
 import kotlinx.serialization.*
-import kotlinx.serialization.internal.HexConverter
-import kotlinx.serialization.internal.SerialClassDescImpl
-import kotlinx.serialization.json.Json
-import kotlin.test.Test
-import kotlin.test.assertEquals
+import kotlinx.serialization.builtins.*
+import kotlinx.serialization.internal.*
+import kotlinx.serialization.json.*
+import kotlin.test.*
 
 class CheckedData<T : Any>(val data: T, val checkSum: ByteArray) {
     override fun equals(other: Any?): Boolean {
@@ -44,18 +31,17 @@ class CheckedData<T : Any>(val data: T, val checkSum: ByteArray) {
 }
 
 @Serializer(forClass = CheckedData::class)
-class CheckedDataSerializer<T : Any>(val dataSerializer: KSerializer<T>) : KSerializer<CheckedData<T>> {
-    override val descriptor: SerialDescriptor = object : SerialClassDescImpl("CheckedDataSerializer") {
-        init {
-            addElement("data")
-            addElement("checkSum")
-        }
+class CheckedDataSerializer<T : Any>(private val dataSerializer: KSerializer<T>) : KSerializer<CheckedData<T>> {
+    override val descriptor: SerialDescriptor = SerialDescriptor("CheckedDataSerializer") {
+        val dataDescriptor = dataSerializer.descriptor
+        element("data", dataDescriptor)
+        element("checkSum", ByteArraySerializer().descriptor)
     }
 
-    override fun serialize(encoder: Encoder, obj: CheckedData<T>) {
+    override fun serialize(encoder: Encoder, value: CheckedData<T>) {
         val out = encoder.beginStructure(descriptor)
-        out.encodeSerializableElement(descriptor, 0, dataSerializer, obj.data)
-        out.encodeStringElement(descriptor, 1, HexConverter.printHexBinary(obj.checkSum))
+        out.encodeSerializableElement(descriptor, 0, dataSerializer, value.data)
+        out.encodeStringElement(descriptor, 1, InternalHexConverter.printHexBinary(value.checkSum))
         out.endStructure(descriptor)
     }
 
@@ -67,7 +53,7 @@ class CheckedDataSerializer<T : Any>(val dataSerializer: KSerializer<T>) : KSeri
             when (val i = inp.decodeElementIndex(descriptor)) {
                 CompositeDecoder.READ_DONE -> break@loop
                 0 -> data = inp.decodeSerializableElement(descriptor, i, dataSerializer)
-                1 -> sum = HexConverter.parseHexBinary(inp.decodeStringElement(descriptor, i))
+                1 -> sum = InternalHexConverter.parseHexBinary(inp.decodeStringElement(descriptor, i))
                 else -> throw SerializationException("Unknown index $i")
             }
         }
@@ -78,6 +64,7 @@ class CheckedDataSerializer<T : Any>(val dataSerializer: KSerializer<T>) : KSeri
 
 @Serializable
 data class DataWithString(@Serializable(with = CheckedDataSerializer::class) val data: CheckedData<String>)
+
 @Serializable
 data class DataWithInt(@Serializable(with = CheckedDataSerializer::class) val data: CheckedData<Int>)
 

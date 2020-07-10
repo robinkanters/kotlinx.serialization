@@ -8,16 +8,16 @@ import kotlinx.serialization.*
 import kotlinx.serialization.test.*
 import kotlin.test.*
 
-class JsonParserTest {
+class JsonParserTest : JsonTestBase() {
 
     @Test
     fun testQuotedBrace() {
-        val tree = parse("""{x: "{"}""")
+        val tree = parse("""{"x": "{"}""")
         assertTrue("x" in tree)
         assertEquals("{", tree.getAs<JsonLiteral>("x").content)
     }
 
-    private fun parse(input: String) = Json.plain.parseJson(input).jsonObject
+    private fun parse(input: String) = default.parseJson(input).jsonObject
 
     @Test
     fun testEmptyKey() {
@@ -40,17 +40,16 @@ class JsonParserTest {
         }
     }
 
-    val strict = Json(JsonConfiguration.Stable.copy(strictMode = true))
 
     @Test
     fun testParseEscapedSymbols() {
         assertEquals(
             StringData("https://t.co/M1uhwigsMT"),
-            strict.parse(StringData.serializer(), """{"data":"https:\/\/t.co\/M1uhwigsMT"}""")
+            default.parse(StringData.serializer(), """{"data":"https:\/\/t.co\/M1uhwigsMT"}""")
         )
-        assertEquals(StringData("\"test\""), strict.parse(StringData.serializer(), """{"data": "\"test\""}"""))
-        assertEquals(StringData("\u00c9"), strict.parse(StringData.serializer(), """{"data": "\u00c9"}"""))
-        assertEquals(StringData("""\\"""), strict.parse(StringData.serializer(), """{"data": "\\\\"}"""))
+        assertEquals(StringData("\"test\""), default.parse(StringData.serializer(), """{"data": "\"test\""}"""))
+        assertEquals(StringData("\u00c9"), default.parse(StringData.serializer(), """{"data": "\u00c9"}"""))
+        assertEquals(StringData("""\\"""), default.parse(StringData.serializer(), """{"data": "\\\\"}"""))
     }
 
     @Test
@@ -72,7 +71,7 @@ class JsonParserTest {
 
 
     private fun testTrailingComma(content: String) {
-        val e = assertFailsWith<JsonDecodingException> {  Json.plain.parseJson(content) }
+        val e = assertFailsWith<JsonDecodingException> {  Json.parseJson(content) }
         val msg = e.message!!
         assertTrue(msg.contains("Expected end of the object"))
     }

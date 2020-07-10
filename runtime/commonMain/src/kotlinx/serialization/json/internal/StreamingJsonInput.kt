@@ -1,11 +1,11 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.json.internal
 
 import kotlinx.serialization.*
-import kotlinx.serialization.internal.EnumDescriptor
+import kotlinx.serialization.builtins.*
 import kotlinx.serialization.json.*
 import kotlinx.serialization.modules.*
 import kotlin.jvm.*
@@ -17,13 +17,13 @@ internal class StreamingJsonInput internal constructor(
     public override val json: Json,
     private val mode: WriteMode,
     @JvmField internal val reader: JsonReader
-) : JsonInput, ElementValueDecoder() {
+) : JsonInput, AbstractDecoder() {
 
     public override val context: SerialModule = json.context
     private var currentIndex = -1
     private val configuration = json.configuration
-    
-    public override fun decodeJson(): JsonElement = JsonParser(reader).read()
+
+    public override fun decodeJson(): JsonElement = JsonParser(json.configuration, reader).read()
 
     @Suppress("DEPRECATION")
     override val updateMode: UpdateMode
@@ -33,10 +33,10 @@ internal class StreamingJsonInput internal constructor(
         return decodeSerializableValuePolymorphic(deserializer)
     }
 
-    override fun beginStructure(desc: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeDecoder {
-        val newMode = json.switchMode(desc)
+    override fun beginStructure(descriptor: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeDecoder {
+        val newMode = json.switchMode(descriptor)
         if (newMode.begin != INVALID) {
-            reader.requireTokenClass(newMode.beginTc) { "Expected '${newMode.begin}, kind: ${desc.kind}'" }
+            reader.requireTokenClass(newMode.beginTc) { "Expected '${newMode.begin}, kind: ${descriptor.kind}'" }
             reader.nextToken()
         }
         return when (newMode) {
@@ -50,7 +50,7 @@ internal class StreamingJsonInput internal constructor(
         }
     }
 
-    override fun endStructure(desc: SerialDescriptor) {
+    override fun endStructure(descriptor: SerialDescriptor) {
         if (mode.end != INVALID) {
             reader.requireTokenClass(mode.endTc) { "Expected '${mode.end}'" }
             reader.nextToken()
@@ -67,7 +67,7 @@ internal class StreamingJsonInput internal constructor(
         return null
     }
 
-    override fun decodeElementIndex(desc: SerialDescriptor): Int {
+    override fun decodeElementIndex(descriptor: SerialDescriptor): Int {
         val tokenClass = reader.tokenClass
         if (tokenClass == TC_COMMA) {
             reader.require(currentIndex != -1, reader.currentPosition) { "Unexpected leading comma" }
@@ -85,7 +85,7 @@ internal class StreamingJsonInput internal constructor(
                     }
                 }
             }
-            else -> decodeObjectIndex(tokenClass, desc)
+            else -> decodeObjectIndex(tokenClass, descriptor)
         }
     }
 
@@ -105,23 +105,30 @@ internal class StreamingJsonInput internal constructor(
         }
     }
 
-    private fun decodeObjectIndex(tokenClass: Byte, desc: SerialDescriptor): Int {
+    private fun decodeObjectIndex(tokenClass: Byte, descriptor: SerialDescriptor): Int {
         if (tokenClass == TC_COMMA && !reader.canBeginValue) {
             reader.fail("Unexpected trailing comma")
         }
 
         while (reader.canBeginValue) {
             ++currentIndex
-            val key = reader.takeString()
+            val key = decodeString()
             reader.requireTokenClass(TC_COLON) { "Expected ':'" }
             reader.nextToken()
-            val index = desc.getElementIndex(key)
+            val index = descriptor.getElementIndex(key)
             if (index != CompositeDecoder.UNKNOWN_NAME) {
                 return index
             }
 
-            if (configuration.strictMode) reader.fail("Encountered an unknown key $key")
-            else reader.skipElement()
+            if (!configuration.ignoreUnknownKeys) {
+                reader.fail(
+                    "Encountered an unknown key '$key'. You can enable 'JsonConfiguration.ignoreUnknownKeys' property" +
+                            " to ignore unknown keys"
+                )
+            } else {
+                reader.skipElement()
+            }
+
             if (reader.tokenClass == TC_COMMA) {
                 reader.nextToken()
                 reader.require(reader.canBeginValue, reader.currentPosition) { "Unexpected trailing comma" }
@@ -143,14 +150,47 @@ internal class StreamingJsonInput internal constructor(
         }
     }
 
-    override fun decodeBoolean(): Boolean = reader.takeString().run { if (configuration.strictMode) toBooleanStrict() else toBoolean() }
-    override fun decodeByte(): Byte = reader.takeString().toByte()
-    override fun decodeShort(): Short = reader.takeString().toShort()
-    override fun decodeInt(): Int = reader.takeString().toInt()
-    override fun decodeLong(): Long = reader.takeString().toLong()
-    override fun decodeFloat(): Float = reader.takeString().toFloat()
-    override fun decodeDouble(): Double = reader.takeString().toDouble()
-    override fun decodeChar(): Char = reader.takeString().single()
-    override fun decodeString(): String = reader.takeString()
-    override fun decodeEnum(enumDescription: EnumDescriptor): Int = enumDescription.getElementIndexOrThrow(reader.takeString())
+    override fun decodeBoolean(): Boolean {
+        /*
+         * We prohibit non true/false boolean literals at all as it is considered way too error-prone,
+         * but allow quoted literal in relaxed mode for booleans.
+         */
+        return if (configuration.isLenient) {
+            reader.takeString().toBooleanStrict()
+        } else {
+            reader.takeBooleanStringUnquoted().toBooleanStrict()
+        }
+    }
+
+    /*
+     * The rest of the primitives are allowed to be quoted and unqouted
+     * to simplify integrations with third-party API.
+     */
+    override fun decodeByte(): Byte = reader.takeString().parse("byte") { toByte() }
+    override fun decodeShort(): Short = reader.takeString().parse("short") { toShort() }
+    override fun decodeInt(): Int = reader.takeString().parse("int") { toInt() }
+    override fun decodeLong(): Long = reader.takeString().parse("long") { toLong() }
+    override fun decodeFloat(): Float = reader.takeString().parse("float") { toFloat() }
+    override fun decodeDouble(): Double = reader.takeString().parse("double") { toDouble() }
+    override fun decodeChar(): Char = reader.takeString().parse("char") { single() }
+
+    override fun decodeString(): String {
+        return if (configuration.isLenient) {
+            reader.takeString()
+        } else {
+            reader.takeStringQuoted()
+        }
+    }
+
+    private inline fun <T> String.parse(type: String, block: String.() -> T): T {
+        try {
+            return block()
+        } catch (e: Throwable) {
+            reader.fail("Failed to parse '$type'")
+        }
+    }
+
+    override fun decodeEnum(enumDescriptor: SerialDescriptor): Int {
+        return enumDescriptor.getElementIndexOrThrow(decodeString())
+    }
 }

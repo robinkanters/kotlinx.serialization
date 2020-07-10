@@ -1,14 +1,14 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 package kotlinx.serialization.json
 
 import kotlinx.serialization.*
 import kotlinx.serialization.json.internal.*
 import kotlinx.serialization.modules.*
-import kotlin.jvm.JvmField
-import kotlin.native.concurrent.SharedImmutable
-import kotlin.reflect.KClass
+import kotlin.jvm.*
+import kotlin.native.concurrent.*
+import kotlin.reflect.*
 
 /**
  * The main entry point to work with JSON serialization.
@@ -54,13 +54,14 @@ public class Json
  * Default Json constructor not marked as unstable API.
  * To configure Json format behavior while still using only stable API it is possible to use `JsonConfiguration.copy` factory:
  * ```
- * val json = Json(configuration: = JsonConfiguration.Stable.copy(strictMode = false))
+ * val json = Json(configuration: = JsonConfiguration.Stable.copy(prettyPrint = true))
  * ```
  */
 public constructor(
     @JvmField internal val configuration: JsonConfiguration = JsonConfiguration.Stable,
     context: SerialModule = EmptyModule
-): AbstractSerialFormat(context + defaultJsonModule), StringFormat {
+) : StringFormat {
+    override val context: SerialModule = context + defaultJsonModule
 
     /**
      * DSL-like constructor for Json.
@@ -69,30 +70,34 @@ public constructor(
     @UnstableDefault
     public constructor(block: JsonBuilder.() -> Unit) : this(JsonBuilder().apply { block() })
 
-    @UseExperimental(UnstableDefault::class)
+    @OptIn(UnstableDefault::class)
     @Deprecated(
-        message = "Default constructor is deprecated, please specify desired configuration explicitly or use Json(JsonConfiguration.Default)",
+        message = "Default constructor is deprecated, please specify the desired configuration explicitly or use Json(JsonConfiguration.Default)",
         replaceWith = ReplaceWith("Json(JsonConfiguration.Default)"),
         level = DeprecationLevel.ERROR
     )
     public constructor() : this(JsonConfiguration(useArrayPolymorphism = true))
 
-    @UseExperimental(UnstableDefault::class)
+    @OptIn(UnstableDefault::class)
     private constructor(builder: JsonBuilder) : this(builder.buildConfiguration(), builder.buildModule())
 
+    init {
+        validateConfiguration()
+    }
+
     /**
-     * Serializes [obj] into an equivalent JSON using provided [serializer].
+     * Serializes [value] into an equivalent JSON using provided [serializer].
      * @throws [JsonException] if given value can not be encoded
      * @throws [SerializationException] if given value can not be serialized
      */
-    public override fun <T> stringify(serializer: SerializationStrategy<T>, obj: T): String {
+    public override fun <T> stringify(serializer: SerializationStrategy<T>, value: T): String {
         val result = StringBuilder()
         val encoder = StreamingJsonOutput(
             result, this,
             WriteMode.OBJ,
             arrayOfNulls(WriteMode.values().size)
         )
-        encoder.encode(serializer, obj)
+        encoder.encode(serializer, value)
         return result.toString()
     }
 
@@ -154,28 +159,97 @@ public constructor(
     @ImplicitReflectionSerializer
     public inline fun <reified T : Any> fromJson(tree: JsonElement): T = fromJson(context.getContextualOrDefault(T::class), tree)
 
-    companion object : StringFormat {
-        @Suppress("DEPRECATION")
+    /**
+     * The default instance of [Json] in the form of companion object.
+     */
+    @UnstableDefault
+    public companion object Default : StringFormat {
+        private const val message =
+            "Top-level JSON instances are deprecated for removal in the favour of user-configured one. " +
+                    "You can either use a Json top-level object, configure your own instance  via 'Json {}' builder-like constructor, " +
+                    "'Json(JsonConfiguration)' constructor or by tweaking stable configuration 'Json(JsonConfiguration.Stable.copy(prettyPrint = true))'"
+
         @UnstableDefault
+        @Deprecated(message = message, level = DeprecationLevel.WARNING)
         public val plain = Json(JsonConfiguration(useArrayPolymorphism = true))
         @UnstableDefault
-        public val unquoted = Json(JsonConfiguration(unquoted = true, useArrayPolymorphism = true))
+        @Deprecated(message = message, level = DeprecationLevel.WARNING)
+        public val unquoted = Json(
+            JsonConfiguration(
+                isLenient = true,
+                ignoreUnknownKeys = true,
+                serializeSpecialFloatingPointValues = true,
+                unquotedPrint = true,
+                useArrayPolymorphism = true
+            )
+        )
+
         @UnstableDefault
+        @Deprecated(message = message, level = DeprecationLevel.WARNING)
         public val indented = Json(JsonConfiguration(prettyPrint = true, useArrayPolymorphism = true))
-        @UnstableDefault
-        public val nonstrict = Json(JsonConfiguration(strictMode = false, useArrayPolymorphism = true))
-
-        override fun install(module: SerialModule) = throw IllegalStateException("You should not install anything to global instance")
-        @UseExperimental(UnstableDefault::class)
-        override val context: SerialModule get() = plain.context
 
         @UnstableDefault
-        override fun <T> stringify(serializer: SerializationStrategy<T>, obj: T): String =
-            plain.stringify(serializer, obj)
+        @Deprecated(message = message, level = DeprecationLevel.WARNING)
+        public val nonstrict = Json(
+            JsonConfiguration(
+                isLenient = true,
+                ignoreUnknownKeys = true,
+                serializeSpecialFloatingPointValues = true,
+                useArrayPolymorphism = true
+            )
+        )
 
-        @UnstableDefault
+        private val jsonInstance = Json(JsonConfiguration.Default)
+
+        override val context: SerialModule
+            get() = jsonInstance.context
+
+        override fun <T> stringify(serializer: SerializationStrategy<T>, value: T): String =
+            jsonInstance.stringify(serializer, value)
         override fun <T> parse(deserializer: DeserializationStrategy<T>, string: String): T =
-            plain.parse(deserializer, string)
+            jsonInstance.parse(deserializer, string)
+
+        /**
+         * @see Json.toJson
+         */
+        public fun <T> toJson(serializer: SerializationStrategy<T>, value: T): JsonElement {
+            return jsonInstance.writeJson(value, serializer)
+        }
+
+        /**
+         * @see Json.toJson
+         */
+        @ImplicitReflectionSerializer
+        public inline fun <reified T : Any> toJson(value: T): JsonElement {
+            return toJson(context.getContextualOrDefault(T::class), value)
+        }
+
+        /**
+         * @see Json.parseJson
+         */
+        public fun parseJson(string: String): JsonElement {
+            return parse(JsonElementSerializer, string)
+        }
+
+        /**
+         * @see Json.fromJson
+         */
+        public fun <T> fromJson(deserializer: DeserializationStrategy<T>, json: JsonElement): T {
+            return jsonInstance.readJson(json, deserializer)
+        }
+
+        /**
+         * @see Json.fromJson
+         */
+        @ImplicitReflectionSerializer
+        public inline fun <reified T : Any> fromJson(tree: JsonElement): T =
+            fromJson(context.getContextualOrDefault(T::class), tree)
+    }
+
+    private fun validateConfiguration() {
+        if (configuration.useArrayPolymorphism) return
+        val collector = ContextValidator(configuration.classDiscriminator)
+        context.dumpTo(collector)
     }
 }
 
@@ -184,12 +258,25 @@ public constructor(
  * Properties of this builder are directly matched with properties of [JsonConfiguration].
  */
 @UnstableDefault
+@Suppress("unused")
 public class JsonBuilder {
     public var encodeDefaults: Boolean = true
+    @Deprecated(level = DeprecationLevel.ERROR,
+        message = "'strictMode = true' is replaced with 3 new configuration parameters: " +
+                "'ignoreUnknownKeys = false' to fail if an unknown key is encountered, " +
+                "'serializeSpecialFloatingPointValues = false' to fail on 'NaN' and 'Infinity' values, " +
+                "'isLenient = false' to prohibit parsing of any non-compliant or malformed JSON")
     public var strictMode: Boolean = true
+    public var ignoreUnknownKeys: Boolean = false
+    public var isLenient: Boolean = false
+    public var serializeSpecialFloatingPointValues: Boolean = false
+    @Deprecated(level = DeprecationLevel.ERROR,
+        message = "'unquoted' is deprecated in the favour of 'unquotedPrint'",
+        replaceWith = ReplaceWith("unquotedPrint"))
     public var unquoted: Boolean = false
     public var allowStructuredMapKeys: Boolean = false
     public var prettyPrint: Boolean = false
+    public var unquotedPrint: Boolean = false
     public var indent: String = "    "
     public var useArrayPolymorphism: Boolean = false
     public var classDiscriminator: String = "type"
@@ -198,10 +285,12 @@ public class JsonBuilder {
     public fun buildConfiguration(): JsonConfiguration =
         JsonConfiguration(
             encodeDefaults,
-            strictMode,
-            unquoted,
+            ignoreUnknownKeys,
+            isLenient,
+            serializeSpecialFloatingPointValues,
             allowStructuredMapKeys,
             prettyPrint,
+            unquotedPrint,
             indent,
             useArrayPolymorphism,
             classDiscriminator
@@ -221,3 +310,5 @@ private val defaultJsonModule = serializersModuleOf(
         JsonArray::class to JsonArraySerializer
     )
 )
+
+internal const val lenientHint = "Use 'JsonConfiguration.isLenient = true' to accept non-compliant JSON"

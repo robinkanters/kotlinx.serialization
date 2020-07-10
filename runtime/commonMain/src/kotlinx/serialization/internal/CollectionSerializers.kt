@@ -1,116 +1,112 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
-
+@file:Suppress("DEPRECATION_ERROR")
 package kotlinx.serialization.internal
 
 import kotlinx.serialization.*
-import kotlinx.serialization.CompositeDecoder.Companion.READ_ALL
 import kotlinx.serialization.CompositeDecoder.Companion.READ_DONE
-import kotlin.reflect.KClass
+import kotlin.jvm.*
+import kotlin.reflect.*
 
-sealed class AbstractCollectionSerializer<TElement, TCollection, TBuilder>: KSerializer<TCollection> {
-    abstract fun TCollection.objSize(): Int
-    abstract fun TCollection.objIterator(): Iterator<TElement>
-    abstract fun builder(): TBuilder
-    abstract fun TBuilder.builderSize(): Int
-    abstract fun TBuilder.toResult(): TCollection
-    abstract fun TCollection.toBuilder(): TBuilder
-    abstract fun TBuilder.checkCapacity(size: Int)
+@InternalSerializationApi
+public sealed class AbstractCollectionSerializer<Element, Collection, Builder> : KSerializer<Collection> {
+    protected abstract fun Collection.collectionSize(): Int
+    protected abstract fun Collection.collectionIterator(): Iterator<Element>
+    protected abstract fun builder(): Builder
+    protected abstract fun Builder.builderSize(): Int
+    protected abstract fun Builder.toResult(): Collection
+    protected abstract fun Collection.toBuilder(): Builder
+    protected abstract fun Builder.checkCapacity(size: Int)
 
     abstract val typeParams: Array<KSerializer<*>>
 
-    abstract override fun serialize(encoder: Encoder, obj: TCollection)
+    abstract override fun serialize(encoder: Encoder, value: Collection)
 
-    final override fun patch(decoder: Decoder, old: TCollection): TCollection {
+    final override fun patch(decoder: Decoder, old: Collection): Collection {
         val builder = old.toBuilder()
         val startIndex = builder.builderSize()
-        @Suppress("NAME_SHADOWING")
-        val decoder = decoder.beginStructure(descriptor, *typeParams)
-        val size = readSize(decoder, builder)
-        mainLoop@ while (true) {
-            val index = decoder.decodeElementIndex(descriptor)
-            when (index) {
-                READ_ALL -> {
-                    readAll(decoder, builder, startIndex, size)
-                    break@mainLoop
-                }
-                READ_DONE -> break@mainLoop
-                else -> readItem(decoder, startIndex + index, builder)
+        val compositeDecoder = decoder.beginStructure(descriptor)
+        if (compositeDecoder.decodeSequentially()) {
+            readAll(compositeDecoder, builder, startIndex, readSize(compositeDecoder, builder))
+        } else {
+            while (true) {
+                val index = compositeDecoder.decodeElementIndex(descriptor)
+                if (index == READ_DONE) break
+                readElement(compositeDecoder, startIndex + index, builder)
             }
-
         }
-        decoder.endStructure(descriptor)
+        compositeDecoder.endStructure(descriptor)
         return builder.toResult()
     }
 
-    final override fun deserialize(decoder: Decoder): TCollection {
+    override fun deserialize(decoder: Decoder): Collection {
         val builder = builder()
         return patch(decoder, builder.toResult())
     }
 
-    private fun readSize(decoder: CompositeDecoder, builder: TBuilder): Int {
+    private fun readSize(decoder: CompositeDecoder, builder: Builder): Int {
         val size = decoder.decodeCollectionSize(descriptor)
         builder.checkCapacity(size)
         return size
     }
 
-    protected abstract fun readItem(decoder: CompositeDecoder, index: Int, builder: TBuilder, checkIndex: Boolean = true)
+    protected abstract fun readElement(decoder: CompositeDecoder, index: Int, builder: Builder, checkIndex: Boolean = true)
 
-    private fun readAll(decoder: CompositeDecoder, builder: TBuilder, startIndex: Int, size: Int) {
-        require(size >= 0) { "Size must be known in advance when using READ_ALL" }
-        for (index in 0 until size)
-            readItem(decoder, startIndex + index, builder, checkIndex = false)
-    }
+    protected abstract fun readAll(decoder: CompositeDecoder, builder: Builder, startIndex: Int, size: Int)
 }
 
-sealed class ListLikeSerializer<TElement, TCollection, TBuilder>(val elementSerializer: KSerializer<TElement>) :
-    AbstractCollectionSerializer<TElement, TCollection, TBuilder>() {
+@InternalSerializationApi
+@Deprecated(level = DeprecationLevel.ERROR, message = "For internal use")
+public sealed class ListLikeSerializer<Element, Collection, Builder>(
+    private val elementSerializer: KSerializer<Element>
+) : AbstractCollectionSerializer<Element, Collection, Builder>() {
 
-    abstract fun TBuilder.insert(index: Int, element: TElement)
-    abstract override val descriptor: ListLikeDescriptor
+    abstract fun Builder.insert(index: Int, element: Element)
+    abstract override val descriptor: SerialDescriptor
 
     final override val typeParams: Array<KSerializer<*>> = arrayOf(elementSerializer)
 
-    override fun serialize(encoder: Encoder, obj: TCollection) {
-        val size = obj.objSize()
+    override fun serialize(encoder: Encoder, value: Collection) {
+        val size = value.collectionSize()
         @Suppress("NAME_SHADOWING")
         val encoder = encoder.beginCollection(descriptor, size, *typeParams)
-        val iterator = obj.objIterator()
+        val iterator = value.collectionIterator()
         for (index in 0 until size)
             encoder.encodeSerializableElement(descriptor, index, elementSerializer, iterator.next())
         encoder.endStructure(descriptor)
     }
 
-    protected override fun readItem(decoder: CompositeDecoder, index: Int, builder: TBuilder, checkIndex: Boolean) {
+    protected final override fun readAll(decoder: CompositeDecoder, builder: Builder, startIndex: Int, size: Int) {
+        require(size >= 0) { "Size must be known in advance when using READ_ALL" }
+        for (index in 0 until size)
+            readElement(decoder, startIndex + index, builder, checkIndex = false)
+    }
+
+    protected override fun readElement(decoder: CompositeDecoder, index: Int, builder: Builder, checkIndex: Boolean) {
         builder.insert(index, decoder.decodeSerializableElement(descriptor, index, elementSerializer))
     }
 }
 
-sealed class MapLikeSerializer<TKey, TVal, TCollection, TBuilder: MutableMap<TKey, TVal>>(
-    val keySerializer: KSerializer<TKey>,
-    val valueSerializer: KSerializer<TVal>
-) : AbstractCollectionSerializer<Map.Entry<TKey, TVal>, TCollection, TBuilder>() {
+@InternalSerializationApi // Not intended for public use at all
+public sealed class MapLikeSerializer<Key, Value, Collection, Builder : MutableMap<Key, Value>>(
+    @JvmField val keySerializer: KSerializer<Key>,
+    @JvmField val valueSerializer: KSerializer<Value>
+) : AbstractCollectionSerializer<Map.Entry<Key, Value>, Collection, Builder>() {
 
-    abstract fun TBuilder.insertKeyValuePair(index: Int, key: TKey, value: TVal)
-    abstract override val descriptor: MapLikeDescriptor
+    abstract fun Builder.insertKeyValuePair(index: Int, key: Key, value: Value)
+    abstract override val descriptor: SerialDescriptor
 
     final override val typeParams = arrayOf(keySerializer, valueSerializer)
 
-    final override fun readItem(decoder: CompositeDecoder, index: Int, builder: TBuilder, checkIndex: Boolean) {
-        val key: TKey = decoder.decodeSerializableElement(descriptor, index, keySerializer)
+    protected final override fun readAll(decoder: CompositeDecoder, builder: Builder, startIndex: Int, size: Int) {
+        require(size >= 0) { "Size must be known in advance when using READ_ALL" }
+        for (index in 0 until size * 2 step 2)
+            readElement(decoder, startIndex + index, builder, checkIndex = false)
+    }
+
+    final override fun readElement(decoder: CompositeDecoder, index: Int, builder: Builder, checkIndex: Boolean) {
+        val key: Key = decoder.decodeSerializableElement(descriptor, index, keySerializer)
         val vIndex = if (checkIndex) {
             decoder.decodeElementIndex(descriptor).also {
                 require(it == index + 1) { "Value must follow key in a map, index for key: $index, returned index for value: $it" }
@@ -118,7 +114,7 @@ sealed class MapLikeSerializer<TKey, TVal, TCollection, TBuilder: MutableMap<TKe
         } else {
             index + 1
         }
-        val value: TVal = if (builder.containsKey(key) && valueSerializer.descriptor.kind !is PrimitiveKind) {
+        val value: Value = if (builder.containsKey(key) && valueSerializer.descriptor.kind !is PrimitiveKind) {
             decoder.updateSerializableElement(descriptor, vIndex, valueSerializer, builder.getValue(key))
         } else {
             decoder.decodeSerializableElement(descriptor, vIndex, valueSerializer)
@@ -126,41 +122,117 @@ sealed class MapLikeSerializer<TKey, TVal, TCollection, TBuilder: MutableMap<TKe
         builder[key] = value
     }
 
-    override fun serialize(encoder: Encoder, obj: TCollection) {
-        val size = obj.objSize()
-        @Suppress("NAME_SHADOWING")
-        val encoder = encoder.beginCollection(descriptor, size, *typeParams)
-        val iterator = obj.objIterator()
+    override fun serialize(encoder: Encoder, value: Collection) {
+        val size = value.collectionSize()
+        val composite = encoder.beginCollection(descriptor, size, *typeParams)
+        val iterator = value.collectionIterator()
         var index = 0
         iterator.forEach { (k, v) ->
-            encoder.encodeSerializableElement(descriptor, index++, keySerializer, k)
-            encoder.encodeSerializableElement(descriptor, index++, valueSerializer, v)
+            composite.encodeSerializableElement(descriptor, index++, keySerializer, k)
+            composite.encodeSerializableElement(descriptor, index++, valueSerializer, v)
         }
+        composite.endStructure(descriptor)
+    }
+}
+
+@InternalSerializationApi
+@Deprecated(level = DeprecationLevel.HIDDEN, message = "For internal use")
+public abstract class PrimitiveArrayBuilder<Array> internal constructor() {
+    abstract val position: Int
+    abstract fun ensureCapacity(requiredCapacity: Int = position + 1)
+    abstract fun build(): Array
+}
+
+/**
+ * Base serializer for all serializers for primitive arrays.
+ *
+ * It exists only to avoid code duplication and should not be used or implemented directly.
+ * Use concrete serializers ([ByteArraySerializer], etc) instead.
+ */
+@InternalSerializationApi
+@Deprecated(level = DeprecationLevel.HIDDEN, message = "For internal use")
+public abstract class PrimitiveArraySerializer<Element, Array, Builder
+: PrimitiveArrayBuilder<Array>> internal constructor(
+    primitiveSerializer: KSerializer<Element>
+) : ListLikeSerializer<Element, Array, Builder>(primitiveSerializer) {
+    final override val descriptor: SerialDescriptor = PrimitiveArrayDescriptor(primitiveSerializer.descriptor)
+
+    final override fun Builder.builderSize() = position
+    final override fun Builder.toResult(): Array = build()
+    final override fun Builder.checkCapacity(size: Int) = ensureCapacity(size)
+
+    final override fun Array.collectionIterator(): Iterator<Element> =
+        error("This method lead to boxing and must not be used, use writeContents instead")
+
+    final override fun Builder.insert(index: Int, element: Element): Unit =
+        error("This method lead to boxing and must not be used, use Builder.append instead")
+
+    final override fun builder(): Builder = error("Use empty().toBuilder() instead")
+
+    protected abstract fun empty(): Array
+
+    protected abstract override fun readElement(
+        decoder: CompositeDecoder,
+        index: Int,
+        builder: Builder,
+        checkIndex: Boolean
+    )
+
+    protected abstract fun writeContent(encoder: CompositeEncoder, content: Array, size: Int)
+
+    final override fun serialize(encoder: Encoder, value: Array) {
+        val size = value.collectionSize()
+        @Suppress("NAME_SHADOWING")
+        val encoder = encoder.beginCollection(descriptor, size, *typeParams)
+        writeContent(encoder, value, size)
         encoder.endStructure(descriptor)
+    }
+
+    final override fun deserialize(decoder: Decoder): Array {
+        // here we use empty() instead of builder().toResult() in AbstractCollectionSerializer
+        // because, unlike with ArrayLists, transformation builder(initialSize) > array > builder
+        // requires additional allocations
+        return patch(decoder, empty())
     }
 }
 
 // todo: can be more efficient when array size is know in advance, this one always uses temporary ArrayList as builder
-class ReferenceArraySerializer<T: Any, E: T?>(private val kClass: KClass<T>, eSerializer: KSerializer<E>):
-        ListLikeSerializer<E, Array<E>, ArrayList<E>>(eSerializer) {
-    override val descriptor = ArrayClassDesc(eSerializer.descriptor)
+@InternalSerializationApi
+@Deprecated(
+    message = "Deprecated in the favour of ArraySerializer() factory",
+    level = DeprecationLevel.ERROR,
+    replaceWith = ReplaceWith("ArraySerializer(eSerializer)", imports = ["kotlinx.serialization.builtins.ArraySerializer"])
+)
+public class ReferenceArraySerializer<ElementKlass : Any, Element : ElementKlass?>(
+    private val kClass: KClass<ElementKlass>,
+    eSerializer: KSerializer<Element>
+) : ListLikeSerializer<Element, Array<Element>, ArrayList<Element>>(eSerializer) {
+    override val descriptor: SerialDescriptor = ArrayClassDesc(eSerializer.descriptor)
 
-    override fun Array<E>.objSize(): Int = size
-    override fun Array<E>.objIterator(): Iterator<E> = iterator()
-    override fun builder(): ArrayList<E> = arrayListOf()
-    override fun ArrayList<E>.builderSize(): Int = size
+    override fun Array<Element>.collectionSize(): Int = size
+    override fun Array<Element>.collectionIterator(): Iterator<Element> = iterator()
+    override fun builder(): ArrayList<Element> = arrayListOf()
+    override fun ArrayList<Element>.builderSize(): Int = size
+
     @Suppress("UNCHECKED_CAST")
-    override fun ArrayList<E>.toResult(): Array<E> = toNativeArray<T, E>(kClass)
-    override fun Array<E>.toBuilder(): ArrayList<E> = ArrayList(this.asList())
-    override fun ArrayList<E>.checkCapacity(size: Int) = ensureCapacity(size)
-    override fun ArrayList<E>.insert(index: Int, element: E) { add(index, element) }
+    override fun ArrayList<Element>.toResult(): Array<Element> = toNativeArrayImpl<ElementKlass, Element>(kClass)
+
+    override fun Array<Element>.toBuilder(): ArrayList<Element> = ArrayList(this.asList())
+    override fun ArrayList<Element>.checkCapacity(size: Int) = ensureCapacity(size)
+    override fun ArrayList<Element>.insert(index: Int, element: Element) {
+        add(index, element)
+    }
 }
 
-class ArrayListSerializer<E>(element: KSerializer<E>) : ListLikeSerializer<E, List<E>, ArrayList<E>>(element) {
-    override val descriptor = ArrayListClassDesc(element.descriptor)
-
-    override fun List<E>.objSize(): Int = size
-    override fun List<E>.objIterator(): Iterator<E> = iterator()
+@InternalSerializationApi
+@Deprecated(
+    level = DeprecationLevel.ERROR, message = "Use ListSerializer() instead",
+    replaceWith = ReplaceWith("ListSerializer(element)", imports = ["kotlinx.serialization.builtins.ListSerializer"])
+)
+public class ArrayListSerializer<E>(element: KSerializer<E>) : ListLikeSerializer<E, List<E>, ArrayList<E>>(element) {
+    override val descriptor: SerialDescriptor = ArrayListClassDesc(element.descriptor)
+    override fun List<E>.collectionSize(): Int = size
+    override fun List<E>.collectionIterator(): Iterator<E> = iterator()
     override fun builder(): ArrayList<E> = arrayListOf()
     override fun ArrayList<E>.builderSize(): Int = size
     override fun ArrayList<E>.toResult(): List<E> = this
@@ -169,11 +241,18 @@ class ArrayListSerializer<E>(element: KSerializer<E>) : ListLikeSerializer<E, Li
     override fun ArrayList<E>.insert(index: Int, element: E) { add(index, element) }
 }
 
-class LinkedHashSetSerializer<E>(eSerializer: KSerializer<E>) : ListLikeSerializer<E, Set<E>, LinkedHashSet<E>>(eSerializer) {
-    override val descriptor = LinkedHashSetClassDesc(eSerializer.descriptor)
+@InternalSerializationApi
+@Deprecated(
+    level = DeprecationLevel.ERROR, message = "Use SetSerializer() instead",
+    replaceWith = ReplaceWith("SetSerializer(eSerializer)", imports = ["kotlinx.serialization.builtins.SetSerializer"])
+)
+public class LinkedHashSetSerializer<E>(
+    eSerializer: KSerializer<E>
+) : ListLikeSerializer<E, Set<E>, LinkedHashSet<E>>(eSerializer) {
 
-    override fun Set<E>.objSize(): Int = size
-    override fun Set<E>.objIterator(): Iterator<E> = iterator()
+    override val descriptor: SerialDescriptor = LinkedHashSetClassDesc(eSerializer.descriptor)
+    override fun Set<E>.collectionSize(): Int = size
+    override fun Set<E>.collectionIterator(): Iterator<E> = iterator()
     override fun builder(): LinkedHashSet<E> = linkedSetOf()
     override fun LinkedHashSet<E>.builderSize(): Int = size
     override fun LinkedHashSet<E>.toResult(): Set<E> = this
@@ -182,11 +261,18 @@ class LinkedHashSetSerializer<E>(eSerializer: KSerializer<E>) : ListLikeSerializ
     override fun LinkedHashSet<E>.insert(index: Int, element: E) { add(element) }
 }
 
-class HashSetSerializer<E>(eSerializer: KSerializer<E>) : ListLikeSerializer<E, Set<E>, HashSet<E>>(eSerializer) {
-    override val descriptor = HashSetClassDesc(eSerializer.descriptor)
+@InternalSerializationApi
+@Deprecated(
+    level = DeprecationLevel.ERROR, message = "Use SetSerializer() instead",
+    replaceWith = ReplaceWith("SetSerializer(eSerializer)", imports = ["kotlinx.serialization.builtins.SetSerializer"])
+)
+public class HashSetSerializer<E>(
+    eSerializer: KSerializer<E>
+) : ListLikeSerializer<E, Set<E>, HashSet<E>>(eSerializer) {
 
-    override fun Set<E>.objSize(): Int = size
-    override fun Set<E>.objIterator(): Iterator<E> = iterator()
+    override val descriptor: SerialDescriptor = HashSetClassDesc(eSerializer.descriptor)
+    override fun Set<E>.collectionSize(): Int = size
+    override fun Set<E>.collectionIterator(): Iterator<E> = iterator()
     override fun builder(): HashSet<E> = HashSet()
     override fun HashSet<E>.builderSize(): Int = size
     override fun HashSet<E>.toResult(): Set<E> = this
@@ -195,12 +281,18 @@ class HashSetSerializer<E>(eSerializer: KSerializer<E>) : ListLikeSerializer<E, 
     override fun HashSet<E>.insert(index: Int, element: E) { add(element) }
 }
 
-class LinkedHashMapSerializer<K, V>(kSerializer: KSerializer<K>, vSerializer: KSerializer<V>) :
-    MapLikeSerializer<K, V, Map<K, V>, LinkedHashMap<K, V>>(kSerializer, vSerializer) {
-    override val descriptor = LinkedHashMapClassDesc(kSerializer.descriptor, vSerializer.descriptor)
+@InternalSerializationApi
+@Deprecated(
+    level = DeprecationLevel.ERROR, message = "Use MapSerializer() instead",
+    replaceWith = ReplaceWith("MapSerializer(kSerializer, vSerializer)", imports = ["kotlinx.serialization.builtins.MapSerializer"])
+)
+public class LinkedHashMapSerializer<K, V>(
+    kSerializer: KSerializer<K>, vSerializer: KSerializer<V>
+) : MapLikeSerializer<K, V, Map<K, V>, LinkedHashMap<K, V>>(kSerializer, vSerializer) {
 
-    override fun Map<K, V>.objSize(): Int = size
-    override fun Map<K, V>.objIterator(): Iterator<Map.Entry<K, V>> = iterator()
+    override val descriptor: SerialDescriptor = LinkedHashMapClassDesc(kSerializer.descriptor, vSerializer.descriptor)
+    override fun Map<K, V>.collectionSize(): Int = size
+    override fun Map<K, V>.collectionIterator(): Iterator<Map.Entry<K, V>> = iterator()
     override fun builder(): LinkedHashMap<K, V> = LinkedHashMap()
     override fun LinkedHashMap<K, V>.builderSize(): Int = size
     override fun LinkedHashMap<K, V>.toResult(): Map<K, V> = this
@@ -209,12 +301,18 @@ class LinkedHashMapSerializer<K, V>(kSerializer: KSerializer<K>, vSerializer: KS
     override fun LinkedHashMap<K, V>.insertKeyValuePair(index: Int, key: K, value: V) = set(key, value)
 }
 
-class HashMapSerializer<K, V>(kSerializer: KSerializer<K>, vSerializer: KSerializer<V>) :
-    MapLikeSerializer<K, V, Map<K, V>, HashMap<K, V>>(kSerializer, vSerializer) {
-    override val descriptor = HashMapClassDesc(kSerializer.descriptor, vSerializer.descriptor)
+@InternalSerializationApi
+@Deprecated(
+    level = DeprecationLevel.ERROR, message = "Use MapSerializer() instead",
+    replaceWith = ReplaceWith("MapSerializer(kSerializer, vSerializer)", imports = ["kotlinx.serialization.builtins.MapSerializer"])
+)
+public class HashMapSerializer<K, V>(
+    kSerializer: KSerializer<K>, vSerializer: KSerializer<V>
+) : MapLikeSerializer<K, V, Map<K, V>, HashMap<K, V>>(kSerializer, vSerializer) {
 
-    override fun Map<K, V>.objSize(): Int = size
-    override fun Map<K, V>.objIterator(): Iterator<Map.Entry<K, V>> = iterator()
+    override val descriptor: SerialDescriptor = HashMapClassDesc(kSerializer.descriptor, vSerializer.descriptor)
+    override fun Map<K, V>.collectionSize(): Int = size
+    override fun Map<K, V>.collectionIterator(): Iterator<Map.Entry<K, V>> = iterator()
     override fun builder(): HashMap<K, V> = HashMap()
     override fun HashMap<K, V>.builderSize(): Int = size
     override fun HashMap<K, V>.toResult(): Map<K, V> = this

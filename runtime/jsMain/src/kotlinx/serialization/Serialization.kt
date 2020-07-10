@@ -1,26 +1,15 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization
 
-import kotlin.reflect.KClass
+import kotlin.reflect.*
 
 @Suppress("UNCHECKED_CAST")
 @ImplicitReflectionSerializer
-actual fun <T: Any> KClass<T>.compiledSerializer(): KSerializer<T>? = this.js.asDynamic().Companion?.serializer() as? KSerializer<T>
+internal actual fun <T : Any> KClass<T>.compiledSerializerImpl(): KSerializer<T>? =
+    this.js.asDynamic().Companion?.serializer() as? KSerializer<T>
 
 @Suppress("UNUSED_VARIABLE") // KT-23633
 actual fun String.toUtf8Bytes(): ByteArray {
@@ -42,6 +31,29 @@ actual fun <E: Enum<E>> enumFromOrdinal(enumClass: KClass<E>, ordinal: Int): E =
 actual fun <E: Enum<E>> KClass<E>.enumClassName(): String = this.js.name
 actual fun <E: Enum<E>> KClass<E>.enumMembers(): Array<E> = (this.js.asDynamic().values() as Array<E>)
 
-actual fun <T: Any, E: T?> ArrayList<E>.toNativeArray(eClass: KClass<T>): Array<E> = toTypedArray()
+internal actual fun <T : Any, E : T?> ArrayList<E>.toNativeArrayImpl(eClass: KClass<T>): Array<E> = toTypedArray()
 
 internal actual fun Any.isInstanceOf(kclass: KClass<*>): Boolean = kclass.isInstance(this)
+
+internal actual fun <T : Any> KClass<T>.simpleName(): String? = simpleName
+
+internal actual fun <T : Any> KClass<T>.constructSerializerForGivenTypeArgs(vararg args: KSerializer<Any?>): KSerializer<T>? {
+    throw NotImplementedError("This method is not supported for Kotlin/JS yet. Please provide serializer explicitly.")
+}
+
+internal actual fun isReferenceArray(type: KType, rootClass: KClass<Any>): Boolean {
+    val typeParameters = type.arguments
+    if (typeParameters.size != 1) return false
+    val parameter = typeParameters.single()
+    // Fun fact -- star projections pass this check
+    val variance = parameter.variance ?: error("Star projections are forbidden: $type")
+    if (parameter.type == null) error("Star projections are forbidden: $type")
+    val prefix = if (variance == KVariance.IN || variance == KVariance.OUT)
+        variance.toString().toLowerCase() + " " else ""
+    val parameterName = prefix + parameter.type.toString()
+    val expectedName = "Array<$parameterName>"
+    if (type.toString() != expectedName) {
+        return false
+    }
+    return true
+}

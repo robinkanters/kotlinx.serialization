@@ -7,7 +7,7 @@ package kotlinx.serialization.json.internal
 import kotlinx.serialization.json.*
 import kotlinx.serialization.json.internal.EscapeCharMappings.ESCAPE_2_CHAR
 import kotlin.jvm.*
-import kotlin.native.concurrent.SharedImmutable
+import kotlin.native.concurrent.*
 
 // special strings
 internal const val NULL = "null"
@@ -139,7 +139,25 @@ internal class JsonReader(private val source: String) {
     }
 
     fun takeString(): String {
-        if (tokenClass != TC_OTHER && tokenClass != TC_STRING) fail("Expected string or non-null literal", tokenPosition)
+        if (tokenClass != TC_OTHER && tokenClass != TC_STRING) fail(
+            "Expected string or non-null literal", tokenPosition)
+        return takeStringInternal()
+    }
+
+    fun takeStringQuoted(): String {
+        if (tokenClass != TC_STRING) fail(
+            "Expected string literal with quotes. $lenientHint",
+            tokenPosition
+        )
+        return takeStringInternal()
+    }
+
+    fun takeBooleanStringUnquoted(): String {
+        if (tokenClass != TC_OTHER) fail("Expected start of the unquoted boolean literal. $lenientHint", tokenPosition)
+        return takeStringInternal()
+    }
+
+    private fun takeStringInternal(): String {
         val prevStr = if (offset < 0)
             String(buf, 0, length) else
             source.substring(offset, offset + length)
@@ -207,16 +225,14 @@ internal class JsonReader(private val source: String) {
         length = 0 // in buffer
         var currentPosition = startPosition + 1
         var lastPosition = currentPosition
-        val length = source.length
         while (source[currentPosition] != STRING) {
-            if (currentPosition >= length) fail("Unexpected EOF", currentPosition)
             if (source[currentPosition] == STRING_ESC) {
                 appendRange(source, lastPosition, currentPosition)
                 val newPosition = appendEsc(source, currentPosition + 1)
                 currentPosition = newPosition
                 lastPosition = newPosition
-            } else {
-                currentPosition++
+            } else if (++currentPosition >= source.length) {
+                fail("EOF", currentPosition)
             }
         }
         if (lastPosition == startPosition + 1) {
@@ -269,14 +285,16 @@ internal class JsonReader(private val source: String) {
                 TC_END_LIST -> {
                     if (tokenStack.last() != TC_BEGIN_LIST) throw JsonDecodingException(
                         currentPosition,
-                        "found ] instead of }"
+                        "found ] instead of }",
+                        source
                     )
                     tokenStack.removeAt(tokenStack.size - 1)
                 }
                 TC_END_OBJ -> {
                     if (tokenStack.last() != TC_BEGIN_OBJ) throw JsonDecodingException(
                         currentPosition,
-                        "found } instead of ]"
+                        "found } instead of ]",
+                        source
                     )
                     tokenStack.removeAt(tokenStack.size - 1)
                 }
@@ -290,7 +308,7 @@ internal class JsonReader(private val source: String) {
     }
 
     public fun fail(message: String, position: Int = currentPosition): Nothing {
-        throw JsonDecodingException(position, message)
+        throw JsonDecodingException(position, message, source)
     }
 
     internal inline fun require(condition: Boolean, position: Int = currentPosition, message: () -> String) {
@@ -313,13 +331,4 @@ private fun rangeEquals(source: String, start: Int, length: Int, str: String): B
     if (length != n) return false
     for (i in 0 until n) if (source[start + i] != str[i]) return false
     return true
-}
-
-internal inline fun require(condition: Boolean, position: Int, msg: () -> String) {
-    if (!condition) fail(position, msg())
-}
-
-@Suppress("NOTHING_TO_INLINE")
-internal inline fun fail(position: Int, msg: String): Nothing {
-    throw JsonDecodingException(position, msg)
 }

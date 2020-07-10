@@ -1,26 +1,16 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization
 
-import kotlin.reflect.KClass
+import java.lang.reflect.*
+import kotlin.reflect.*
 
 @Suppress("UNCHECKED_CAST")
 @ImplicitReflectionSerializer
-actual fun <T: Any> KClass<T>.compiledSerializer(): KSerializer<T>? = this.java.invokeSerializerGetter()
+internal actual fun <T : Any> KClass<T>.compiledSerializerImpl(): KSerializer<T>? =
+    this.constructSerializerForGivenTypeArgs()
 
 actual fun String.toUtf8Bytes() = this.toByteArray(Charsets.UTF_8)
 actual fun stringFromUtf8Bytes(bytes: ByteArray) = String(bytes, Charsets.UTF_8)
@@ -32,31 +22,48 @@ actual fun <E: Enum<E>> KClass<E>.enumClassName(): String = this.java.canonicalN
 actual fun <E : Enum<E>> KClass<E>.enumMembers(): Array<E> = this.java.enumConstants
 
 @Suppress("UNCHECKED_CAST")
-actual fun <T: Any, E: T?> ArrayList<E>.toNativeArray(eClass: KClass<T>): Array<E> = toArray(java.lang.reflect.Array.newInstance(eClass.java, size) as Array<E>)
+internal actual fun <T : Any, E : T?> ArrayList<E>.toNativeArrayImpl(eClass: KClass<T>): Array<E> =
+    toArray(java.lang.reflect.Array.newInstance(eClass.java, size) as Array<E>)
 
 @Suppress("UNCHECKED_CAST")
 @ImplicitReflectionSerializer
-internal fun <T> Class<T>.invokeSerializerGetter(vararg args: KSerializer<Any>): KSerializer<T>? {
-    var serializer: KSerializer<T>? = null
-
+internal actual fun <T : Any> KClass<T>.constructSerializerForGivenTypeArgs(vararg args: KSerializer<Any?>): KSerializer<T>? {
+    val jClass = this.java
     // Search for serializer defined on companion object.
-    val companion = declaredFields.singleOrNull { it.name == "Companion" }?.apply { isAccessible = true }?.get(null)
+    val companion =
+        jClass.declaredFields.singleOrNull { it.name == "Companion" }?.apply { isAccessible = true }?.get(null)
     if (companion != null) {
-        serializer = companion.javaClass.methods
+        val serializer = companion.javaClass.methods
             .find { method ->
                 method.name == "serializer" && method.parameterTypes.size == args.size && method.parameterTypes.all { it == KSerializer::class.java }
             }
             ?.invoke(companion, *args) as? KSerializer<T>
+        if (serializer != null) return serializer
     }
-
-    // Search for default serializer in case no serializer is defined on companion object.
-    if (serializer == null) {
-        serializer =
-            declaredClasses.singleOrNull { it.simpleName == ("\$serializer") }
+    // Check whether it's serializable object
+    findObjectSerializer(jClass)?.let { return it }
+    // Search for default serializer if no serializer is defined in companion object.
+    return try {
+        jClass.declaredClasses.singleOrNull { it.simpleName == ("\$serializer") }
             ?.getField("INSTANCE")?.get(null) as? KSerializer<T>
+    } catch (e: NoSuchFieldException) {
+        null
     }
+}
 
-    return serializer
+
+private fun <T : Any> findObjectSerializer(jClass: Class<T>): KSerializer<T>? {
+    // Check it is an object without using kotlin-reflect
+    val field = jClass.declaredFields.singleOrNull { it.name == "INSTANCE" && it.type == jClass && Modifier.isStatic(it.modifiers) }
+        ?: return null
+    // Retrieve its instance and call serializer()
+    val instance = field.get(null)
+    val method =
+        jClass.methods.singleOrNull { it.name == "serializer" && it.parameters.isEmpty() && it.returnType == KSerializer::class.java }
+            ?: return null
+    val result = method.invoke(instance)
+    @Suppress("UNCHECKED_CAST")
+    return result as? KSerializer<T>
 }
 
 /**
@@ -68,7 +75,11 @@ internal fun <T> Class<T>.invokeSerializerGetter(vararg args: KSerializer<Any>):
  *
  * On JS and Native, this function delegates to aforementioned
  * [KClass.isInstance] since it is supported there out-of-the box;
- * on JVM, it falls back to java.lang.Class.isInstance which causes
+ * on JVM, it falls back to java.lang.Class.isInstance, which causes
  * difference when applied to function types with big arity.
  */
-internal actual fun Any.isInstanceOf(kclass: KClass<*>): Boolean = kclass.java.isInstance(this)
+internal actual fun Any.isInstanceOf(kclass: KClass<*>): Boolean = kclass.javaObjectType.isInstance(this)
+
+internal actual fun <T : Any> KClass<T>.simpleName(): String? = java.simpleName
+
+internal actual fun isReferenceArray(type: KType, rootClass: KClass<Any>): Boolean = rootClass.java.isArray

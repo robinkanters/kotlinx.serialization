@@ -1,10 +1,11 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.features
 
 import kotlinx.serialization.*
+import kotlinx.serialization.builtins.*
 import kotlinx.serialization.internal.*
 import kotlinx.serialization.json.*
 import kotlinx.serialization.modules.*
@@ -29,17 +30,16 @@ class ContextAndPolymorphicTest {
     data class PayloadList(val ps: List<@ContextualSerialization Payload>)
 
     @Serializer(forClass = Payload::class)
-    object PayloadSerializer {}
+    object PayloadSerializer
 
     object BinaryPayloadSerializer : KSerializer<Payload> {
-        override val descriptor: SerialDescriptor = SerialClassDescImpl("Payload")
-
-        override fun serialize(encoder: Encoder, obj: Payload) {
-            encoder.encodeString(HexConverter.printHexBinary(obj.s.toUtf8Bytes()))
+        override val descriptor: SerialDescriptor = PrimitiveDescriptor("Payload", PrimitiveKind.STRING)
+        override fun serialize(encoder: Encoder, value: Payload) {
+            encoder.encodeString(InternalHexConverter.printHexBinary(value.s.encodeToByteArray()))
         }
 
         override fun deserialize(decoder: Decoder): Payload {
-            return Payload(stringFromUtf8Bytes(HexConverter.parseHexBinary(decoder.decodeString())))
+            return Payload(InternalHexConverter.parseHexBinary(decoder.decodeString()).decodeToString())
         }
     }
 
@@ -51,7 +51,7 @@ class ContextAndPolymorphicTest {
         val scope = serializersModuleOf(Payload::class, PayloadSerializer)
         val bPolymorphicModule = SerializersModule { polymorphic(Any::class) { Payload::class with PayloadSerializer } }
         json = Json(
-            JsonConfiguration(unquoted = true, useArrayPolymorphism = true),
+            JsonConfiguration(unquotedPrint = true, useArrayPolymorphism = true),
             context = scope + bPolymorphicModule
         )
     }
@@ -64,7 +64,8 @@ class ContextAndPolymorphicTest {
 
     @Test
     fun testReadCustom() {
-        val s = json.parse(EnhancedData.serializer(), "{data:{a:100500,b:42},stringPayload:{s:string},binaryPayload:62696E617279}")
+        val s = json.parse(EnhancedData.serializer(),
+            """{"data":{"a":100500,"b":42},"stringPayload":{"s":"string"},"binaryPayload":"62696E617279"}""")
         assertEquals(obj, s)
     }
 
@@ -77,7 +78,7 @@ class ContextAndPolymorphicTest {
     @Test
     fun testPolymorphicResolve() {
         val map = mapOf<String, Any>("Payload" to Payload("data"))
-        val serializer = (StringSerializer to PolymorphicSerializer(Any::class)).map
+        val serializer = MapSerializer(String.serializer(), PolymorphicSerializer(Any::class))
         val s = json.stringify(serializer, map)
         assertEquals("""{Payload:[kotlinx.serialization.features.ContextAndPolymorphicTest.Payload,{s:data}]}""", s)
     }

@@ -1,18 +1,21 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.json
 
 import kotlinx.serialization.*
 import kotlinx.serialization.json.internal.*
+import kotlinx.serialization.builtins.*
 import kotlinx.serialization.modules.*
+import kotlinx.serialization.test.*
 import kotlin.test.*
 
 abstract class JsonTestBase {
-    protected val strict = Json(JsonConfiguration.Default)
-    protected val unquoted = Json { unquoted = true }
-    protected val nonStrict = Json { strictMode = false }
+    protected val default = Json(JsonConfiguration.Default)
+    protected val unquoted = Json { unquotedPrint = true }
+    protected val unquotedLenient = Json { unquotedPrint = true; isLenient = true; ignoreUnknownKeys = true; serializeSpecialFloatingPointValues = true }
+    protected val lenient = Json { isLenient = true; ignoreUnknownKeys = true; serializeSpecialFloatingPointValues = true }
 
     @ImplicitReflectionSerializer
     internal inline fun <reified T : Any> Json.stringify(value: T, useStreaming: Boolean): String {
@@ -46,7 +49,7 @@ abstract class JsonTestBase {
             // Overload to test public map extension
             stringify(map)
         } else {
-            stringify((context.getContextualOrDefault(K::class) to context.getContextualOrDefault(V::class)).map, map)
+            stringify(MapSerializer(context.getContextualOrDefault(K::class), context.getContextualOrDefault(V::class)), map)
         }
     }
 
@@ -87,7 +90,7 @@ abstract class JsonTestBase {
             // Overload to test public map extension
             parseMap(content)
         } else {
-            parse((context.getContextualOrDefault(K::class) to context.getContextualOrDefault(V::class)).map, content, useStreaming)
+            parse(MapSerializer(context.getContextualOrDefault(K::class), context.getContextualOrDefault(V::class)), content, useStreaming)
         }
     }
 
@@ -102,8 +105,8 @@ abstract class JsonTestBase {
         val useStreaming: Boolean,
         override val context: SerialModule = EmptyModule
     ) : StringFormat {
-        override fun <T> stringify(serializer: SerializationStrategy<T>, obj: T): String {
-            return json.stringify(serializer, obj, useStreaming)
+        override fun <T> stringify(serializer: SerializationStrategy<T>, value: T): String {
+            return json.stringify(serializer, value, useStreaming)
         }
 
         override fun <T> parse(deserializer: DeserializationStrategy<T>, string: String): T {
@@ -119,14 +122,22 @@ abstract class JsonTestBase {
 
     private fun processResults(streamingResult: Result<*>, treeResult: Result<*>) {
         val results = listOf(streamingResult, treeResult)
-        results.forEachIndexed { index, result ->
-            if (result.isFailure)
-                throw Exception("Failed ${if (index == 0) "streaming" else "tree"} test", result.exceptionOrNull()!!)
+        results.forEachIndexed { _, result ->
+            result.onFailure { throw it }
         }
         assertEquals(streamingResult.getOrNull()!!, treeResult.getOrNull()!!)
     }
 
-    internal fun <T> parametrizedTest(serializer: KSerializer<T>, data: T, expected: String, json: Json = unquoted) {
+    /**
+     * Same as [assertStringFormAndRestored], but tests both json converters (streaming and tree)
+     * via [parametrizedTest]
+     */
+    internal fun <T> assertJsonFormAndRestored(
+        serializer: KSerializer<T>,
+        data: T,
+        expected: String,
+        json: Json = default
+    ) {
         parametrizedTest { useStreaming ->
             val serialized = json.stringify(serializer, data, useStreaming)
             assertEquals(expected, serialized)

@@ -1,47 +1,42 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization
 
 import kotlinx.serialization.internal.*
+import kotlinx.serialization.builtins.*
 import java.lang.reflect.*
-import kotlin.reflect.KClass
+import kotlin.reflect.*
 
 @PublishedApi
 internal open class TypeBase<T>
 
-inline fun <reified T> typeTokenOf(): Type {
+/**
+ * Provides an instance of [java.lang.reflect.Type] with
+ * generic arguments filled in.
+ *
+ * Consider using Kotlin's [typeOf] and [KType] since they can
+ * also provide information about nullability.
+ */
+@Deprecated("Consider using Kotlin type token instead", ReplaceWith("typeOf()"), level = DeprecationLevel.WARNING)
+public inline fun <reified T> typeTokenOf(): Type {
     val base = object : TypeBase<T>() {}
     val superType = base::class.java.genericSuperclass!!
     return (superType as ParameterizedType).actualTypeArguments.first()!!
 }
 
 /**
- * This method uses reflection to construct serializer for given type. However,
- * since it accepts type token, it is available only on JVM by design,
- * and it can work correctly even with generics, so
- * it is not annotated with [ImplicitReflectionSerializer].
+ * Constructs a serializer for the given reflective Java [type].
+ * [serializerByTypeToken] is intended to be used as an interoperability layer for libraries like GSON and Retrofit,
+ * that operate with reflective Java [Type] and cannot use [typeOf].
  *
- * Keep in mind that this is a 'heavy' call, so result probably should be cached somewhere else.
- *
- * This method intended for static, format-agnostic resolving (e.g. in adapter factories) so context is not used here.
+ * For application-level serialization, it is recommended to use `serializer<T>()` instead as it is aware of
+ * Kotlin-specific type information, such as nullability, sealed classes and object.
  */
 @Suppress("UNCHECKED_CAST")
-@UseExperimental(ImplicitReflectionSerializer::class)
-fun serializerByTypeToken(type: Type): KSerializer<Any> = when (type) {
+@OptIn(ImplicitReflectionSerializer::class)
+public fun serializerByTypeToken(type: Type): KSerializer<Any> = when (type) {
     is GenericArrayType -> {
         val eType = type.genericComponentType.let {
             when (it) {
@@ -55,23 +50,23 @@ fun serializerByTypeToken(type: Type): KSerializer<Any> = when (type) {
             is KClass<*> -> eType
             else -> throw IllegalStateException("unsupported type in GenericArray: ${eType::class}")
         } as KClass<Any>
-        ReferenceArraySerializer(kclass, serializer) as KSerializer<Any>
+        ArraySerializer(kclass, serializer) as KSerializer<Any>
     }
     is Class<*> -> if (!type.isArray) {
         requireNotNull<KSerializer<out Any>>((type.kotlin as KClass<Any>).serializer<Any>()) as KSerializer<Any>
     } else {
         val eType: Class<*> = type.componentType
         val s = serializerByTypeToken(eType)
-        val arraySerializer = ReferenceArraySerializer(eType.kotlin as KClass<Any>, s)
+        val arraySerializer = ArraySerializer(eType.kotlin as KClass<Any>, s)
         arraySerializer as KSerializer<Any>
     }
     is ParameterizedType -> {
         val rootClass = (type.rawType as Class<*>)
         val args = (type.actualTypeArguments)
         when {
-            List::class.java.isAssignableFrom(rootClass) -> ArrayListSerializer(serializerByTypeToken(args[0])) as KSerializer<Any>
-            Set::class.java.isAssignableFrom(rootClass) -> HashSetSerializer(serializerByTypeToken(args[0])) as KSerializer<Any>
-            Map::class.java.isAssignableFrom(rootClass) -> HashMapSerializer(
+            List::class.java.isAssignableFrom(rootClass) -> ListSerializer(serializerByTypeToken(args[0])) as KSerializer<Any>
+            Set::class.java.isAssignableFrom(rootClass) -> SetSerializer(serializerByTypeToken(args[0])) as KSerializer<Any>
+            Map::class.java.isAssignableFrom(rootClass) -> MapSerializer(
                 serializerByTypeToken(args[0]),
                 serializerByTypeToken(args[1])
             ) as KSerializer<Any>
@@ -81,10 +76,11 @@ fun serializerByTypeToken(type: Type): KSerializer<Any> = when (type) {
             ) as KSerializer<Any>
 
             else -> {
-                val varargs = args.map { serializerByTypeToken(it) }.toTypedArray()
-                (rootClass.invokeSerializerGetter(*varargs) as? KSerializer<Any>) ?: requireNotNull<KSerializer<out Any>>(
-                    (rootClass.kotlin as KClass<Any>)
-                        .serializer()) as KSerializer<Any>
+                // probably we should deprecate this method because it can't differ nullable vs non-nullable types
+                // since it uses Java TypeToken, not Kotlin one
+                val varargs = args.map { serializerByTypeToken(it) as KSerializer<Any?> }.toTypedArray()
+                (rootClass.kotlin.constructSerializerForGivenTypeArgs(*varargs) as? KSerializer<Any>)
+                        ?: requireNotNull<KSerializer<out Any>>((rootClass.kotlin as KClass<Any>).serializer()) as KSerializer<Any>
             }
         }
     }

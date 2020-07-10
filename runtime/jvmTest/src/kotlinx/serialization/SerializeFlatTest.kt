@@ -1,22 +1,12 @@
 /*
- * Copyright 2018 JetBrains s.r.o.
- *
- * Licensed under the Apache License, Version 2.0 (the "License");
- * you may not use this file except in compliance with the License.
- * You may obtain a copy of the License at
- *
- * http://www.apache.org/licenses/LICENSE-2.0
- *
- * Unless required by applicable law or agreed to in writing, software
- * distributed under the License is distributed on an "AS IS" BASIS,
- * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
- * See the License for the specific language governing permissions and
- * limitations under the License.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization
 
+import kotlinx.serialization.builtins.*
 import org.junit.Test
+import kotlin.test.*
 
 // Serializable data class
 
@@ -65,8 +55,9 @@ data class Custom(
 @Suppress("NAME_SHADOWING")
 object CustomSerializer : KSerializer<Custom> {
     override val descriptor = object : SerialDescriptor {
-        override val name = "kotlinx.serialization.Custom"
+        override val serialName = "kotlinx.serialization.Custom"
         override val kind: SerialKind = StructureKind.CLASS
+        override val elementsCount: Int get() = 2
         override fun getElementName(index: Int) = when(index) {
             0 -> "value1"
             1 -> "value2"
@@ -77,12 +68,16 @@ object CustomSerializer : KSerializer<Custom> {
             "value2" -> 1
             else -> -1
         }
+
+        override fun getElementAnnotations(index: Int): List<Annotation> = emptyList()
+        override fun getElementDescriptor(index: Int): SerialDescriptor = fail("Should not be called")
+        override fun isElementOptional(index: Int): Boolean = false
     }
 
-    override fun serialize(encoder: Encoder, obj : Custom) {
+    override fun serialize(encoder: Encoder, value: Custom) {
         val encoder = encoder.beginStructure(descriptor)
-        encoder.encodeStringElement(descriptor, 0, obj._value1)
-        encoder.encodeIntElement(descriptor, 1, obj._value2)
+        encoder.encodeStringElement(descriptor, 0, value._value1)
+        encoder.encodeIntElement(descriptor, 1, value._value2)
         encoder.endStructure(descriptor)
     }
 
@@ -139,7 +134,7 @@ class SerializeFlatTest() {
     @Test
     fun testReg() {
         val out = Out("Reg")
-        val reg = Reg();
+        val reg = Reg()
         reg.value1 = "s1"
         reg.value2 = 42
         out.encode(Reg::class.serializer(), reg)
@@ -191,34 +186,43 @@ class SerializeFlatTest() {
         fun fail(msg: String): Nothing = throw RuntimeException(msg)
 
         fun checkDesc(name: String, desc: SerialDescriptor) {
-            if (desc.name != "kotlinx.serialization." + name) fail("checkDesc name $desc")
+            if (desc.serialName != "kotlinx.serialization." + name) fail("checkDesc name $desc")
             if (desc.kind != StructureKind.CLASS) fail("checkDesc kind ${desc.kind}")
             if (desc.getElementName(0) != "value1") fail("checkDesc[0] $desc")
             if (desc.getElementName(1) != "value2") fail("checkDesc[1] $desc")
         }
     }
 
-    class Out(private val name: String) : ElementValueEncoder() {
+    class Out(private val name: String) : AbstractEncoder() {
         var step = 0
 
-        override fun beginStructure(desc: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeEncoder {
-            checkDesc(name, desc)
-            if (step == 0) step++ else fail("@$step: beginStructure($desc)")
+        override fun beginStructure(
+            descriptor: SerialDescriptor,
+            vararg typeSerializers: KSerializer<*>
+        ): CompositeEncoder {
+            checkDesc(name, descriptor)
+            if (step == 0) step++ else fail("@$step: beginStructure($descriptor)")
             return this
         }
 
-        override fun encodeElement(desc: SerialDescriptor, index: Int): Boolean {
-            checkDesc(name, desc)
+        override fun encodeElement(descriptor: SerialDescriptor, index: Int): Boolean {
+            checkDesc(name, descriptor)
             when (step) {
-                1 -> if (index == 0) { step++; return true }
-                3 -> if (index == 1) { step++; return true }
+                1 -> if (index == 0) {
+                    step++; return true
+                }
+                3 -> if (index == 1) {
+                    step++; return true
+                }
             }
-            fail("@$step: encodeElement($desc, $index)")
+            fail("@$step: encodeElement($descriptor, $index)")
         }
 
         override fun encodeString(value: String) {
             when (step) {
-                2 -> if (value == "s1") { step++; return }
+                2 -> if (value == "s1") {
+                    step++; return
+                }
             }
             fail("@$step: encodeString($value)")
         }
@@ -230,9 +234,9 @@ class SerializeFlatTest() {
             fail("@$step: decodeInt($value)")
         }
 
-        override fun endStructure(desc: SerialDescriptor) {
-            checkDesc(name, desc)
-            if (step == 5) step++ else fail("@$step: endStructure($desc)")
+        override fun endStructure(descriptor: SerialDescriptor) {
+            checkDesc(name, descriptor)
+            if (step == 5) step++ else fail("@$step: endStructure($descriptor)")
         }
 
         fun done() {
@@ -240,23 +244,29 @@ class SerializeFlatTest() {
         }
     }
 
-    class Inp(private val name: String) : ElementValueDecoder() {
+    class Inp(private val name: String) : AbstractDecoder() {
         var step = 0
 
-        override fun beginStructure(desc: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeDecoder {
-            checkDesc(name, desc)
-            if (step == 0) step++ else fail("@$step: beginStructure($desc)")
+        override fun beginStructure(descriptor: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeDecoder {
+            checkDesc(name, descriptor)
+            if (step == 0) step++ else fail("@$step: beginStructure($descriptor)")
             return this
         }
 
-        override fun decodeElementIndex(desc: SerialDescriptor): Int {
-            checkDesc(name, desc)
+        override fun decodeElementIndex(descriptor: SerialDescriptor): Int {
+            checkDesc(name, descriptor)
             when (step) {
-                1 -> { step++; return 0 }
-                3 -> { step++; return 1 }
-                5 -> { step++; return -1 }
+                1 -> {
+                    step++; return 0
+                }
+                3 -> {
+                    step++; return 1
+                }
+                5 -> {
+                    step++; return -1
+                }
             }
-            fail("@$step: decodeElementIndex($desc)")
+            fail("@$step: decodeElementIndex($descriptor)")
         }
 
         override fun decodeString(): String {
@@ -273,9 +283,9 @@ class SerializeFlatTest() {
             fail("@$step: decodeInt()")
         }
 
-        override fun endStructure(desc: SerialDescriptor) {
-            checkDesc(name, desc)
-            if (step == 6) step++ else fail("@$step: endStructure($desc)")
+        override fun endStructure(descriptor: SerialDescriptor) {
+            checkDesc(name, descriptor)
+            if (step == 6) step++ else fail("@$step: endStructure($descriptor)")
         }
 
         fun done() {

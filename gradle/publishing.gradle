@@ -1,5 +1,5 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 // Configures publishing of Maven artifacts to Bintray
@@ -10,7 +10,8 @@ apply plugin: 'com.jfrog.bintray'
 
 apply from: project.rootProject.file('gradle/mavenMetadata.gradle')
 
-def isMultiplatform = project.name == "kotlinx-serialization-runtime"
+def isMultiplatform = project.name in ["kotlinx-serialization-runtime", "kotlinx-serialization-protobuf",
+                                       "kotlinx-serialization-cbor", "kotlinx-serialization-properties"]
 
 task stubSources(type: Jar) {
     classifier = 'sources'
@@ -43,7 +44,7 @@ afterEvaluate {
                 maven(MavenPublication) { publication ->
                     artifactId variantName
                     publication.from components.java
-//                    publication.artifact stubJavadoc // todo
+                    publication.artifact stubJavadoc
                     publication.artifact sourcesJar
                     publication.pom.withXml(configureMavenCentralMetadata)
                 }
@@ -60,9 +61,7 @@ afterEvaluate {
             switch (type) {
                 case 'kotlinMultiplatform':
                     it.artifactId = "$variantName-native"
-                    // bug in bintray plugin? jvm publication has empty jar after this
-//                    it.artifact emptyJar
-//                    it.artifact stubJavadoc
+                    it.artifact stubJavadoc
                     it.artifact sourcesJar
                     break
 
@@ -102,15 +101,12 @@ private void disableMetadataPublication() {
         def publication = publishing.publications.findByName(target.name)
 
         if (publication != null) {
-//            publication.artifact stubJavadoc
+            publication.artifact stubJavadoc
             if (target.platformType.name != 'native') {
                 publication.moduleDescriptorGenerator = null
                 tasks.matching { it.name == "generateMetadataFileFor${name.capitalize()}Publication" }.all {
                     onlyIf { false }
                 }
-            } else {
-                // bug in bintray plugin? jvm publication has empty jar after this
-//                publication.artifact emptyJar
             }
         }
     }

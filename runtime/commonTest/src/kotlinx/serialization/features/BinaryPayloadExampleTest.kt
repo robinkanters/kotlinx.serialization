@@ -1,8 +1,12 @@
+/*
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ */
+
 package kotlinx.serialization.features
 
 import kotlinx.serialization.*
-import kotlinx.serialization.internal.HexConverter
-import kotlinx.serialization.internal.SerialClassDescImpl
+import kotlinx.serialization.builtins.*
+import kotlinx.serialization.internal.*
 import kotlinx.serialization.json.Json
 import kotlin.test.Test
 import kotlin.test.assertEquals
@@ -12,17 +16,15 @@ class BinaryPayloadExampleTest {
     class BinaryPayload(val req: ByteArray, val res: ByteArray) {
         @Serializer(forClass = BinaryPayload::class)
         companion object : KSerializer<BinaryPayload> {
-            override val descriptor: SerialDescriptor = object : SerialClassDescImpl("BinaryPayload") {
-                init {
-                    addElement("req")
-                    addElement("res")
-                }
+            override val descriptor: SerialDescriptor = SerialDescriptor("BinaryPayload") {
+                element("req", ByteArraySerializer().descriptor)
+                element("res", ByteArraySerializer().descriptor)
             }
 
-            override fun serialize(encoder: Encoder, obj: BinaryPayload) {
+            override fun serialize(encoder: Encoder, value: BinaryPayload) {
                 val compositeOutput = encoder.beginStructure(descriptor)
-                compositeOutput.encodeStringElement(descriptor, 0, HexConverter.printHexBinary(obj.req))
-                compositeOutput.encodeStringElement(descriptor, 1, HexConverter.printHexBinary(obj.res))
+                compositeOutput.encodeStringElement(descriptor, 0, InternalHexConverter.printHexBinary(value.req))
+                compositeOutput.encodeStringElement(descriptor, 1, InternalHexConverter.printHexBinary(value.res))
                 compositeOutput.endStructure(descriptor)
             }
 
@@ -33,8 +35,8 @@ class BinaryPayloadExampleTest {
                 loop@ while (true) {
                     when (val i = dec.decodeElementIndex(descriptor)) {
                         CompositeDecoder.READ_DONE -> break@loop
-                        0 -> req = HexConverter.parseHexBinary(dec.decodeStringElement(descriptor, i))
-                        1 -> res = HexConverter.parseHexBinary(dec.decodeStringElement(descriptor, i))
+                        0 -> req = InternalHexConverter.parseHexBinary(dec.decodeStringElement(descriptor, i))
+                        1 -> res = InternalHexConverter.parseHexBinary(dec.decodeStringElement(descriptor, i))
                         else -> throw SerializationException("Unknown index $i")
                     }
                 }

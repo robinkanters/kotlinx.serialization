@@ -1,32 +1,35 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.json.serializers
 
 import kotlinx.serialization.SampleEnum
-import kotlinx.serialization.internal.*
 import kotlinx.serialization.json.JsonTestBase
-import kotlinx.serialization.test.CommonEnumSerializer
+import kotlinx.serialization.*
+import kotlinx.serialization.builtins.*
+import kotlinx.serialization.test.EnumSerializer
+import kotlin.Char.*
 import kotlin.test.Test
 
 class JsonNativePrimitivesTest : JsonTestBase() {
     @Test
-    fun testTopLevelNativeInt() = parametrizedTest(IntSerializer, 42, "42", strict)
+    fun testTopLevelNativeInt() = assertJsonFormAndRestored(Int.serializer(), 42, "42", default)
 
     @Test
-    fun testTopLevelNativeString() = parametrizedTest(StringSerializer, "42", "\"42\"", strict)
+    fun testTopLevelNativeString() = assertJsonFormAndRestored(String.serializer(), "42", "\"42\"", default)
 
     @Test
-    fun testTopLevelNativeChar() = parametrizedTest(CharSerializer, '4', "\"4\"", strict)
+    fun testTopLevelNativeChar() = assertJsonFormAndRestored(Char.serializer(), '4', "\"4\"", default)
 
     @Test
-    fun testTopLevelNativeBoolean() = parametrizedTest(BooleanSerializer, true, "true", strict)
+    fun testTopLevelNativeBoolean() = assertJsonFormAndRestored(Boolean.serializer(), true, "true", default)
 
     @Test
     fun testTopLevelNativeEnum() =
-        parametrizedTest(CommonEnumSerializer("SampleEnum"), SampleEnum.OptionB, "\"OptionB\"", strict)
+        assertJsonFormAndRestored(EnumSerializer("SampleEnum"), SampleEnum.OptionB, "\"OptionB\"", default)
 
     @Test
-    fun testTopLevelNativeNullable() = parametrizedTest(NullableSerializer(IntSerializer), null, "null", strict)
+    fun testTopLevelNativeNullable() =
+        assertJsonFormAndRestored(Int.serializer().nullable, null, "null", default)
 }

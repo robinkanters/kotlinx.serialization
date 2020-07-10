@@ -35,7 +35,7 @@ private sealed class AbstractJsonTreeOutput(
         encodeSerializableValue(JsonElementSerializer, element)
     }
 
-    override fun shouldEncodeElementDefault(desc: SerialDescriptor, index: Int): Boolean = configuration.encodeDefaults
+    override fun shouldEncodeElementDefault(descriptor: SerialDescriptor, index: Int): Boolean = configuration.encodeDefaults
     override fun composeName(parentName: String, childName: String): String = childName
     abstract fun putElement(key: String, element: JsonElement)
     abstract fun getCurrent(): JsonElement
@@ -48,11 +48,11 @@ private sealed class AbstractJsonTreeOutput(
     override fun encodeTaggedLong(tag: String, value: Long) = putElement(tag, JsonLiteral(value))
 
     override fun encodeTaggedFloat(tag: String, value: Float) {
-        if (configuration.strictMode && !value.isFinite()) {
-            throw InvalidFloatingPoint(value, tag, "float")
-        }
-
+        // First encode value, then check, to have a prettier error message
         putElement(tag, JsonLiteral(value))
+        if (!configuration.serializeSpecialFloatingPointValues && !value.isFinite()) {
+            throw InvalidFloatingPoint(value, tag, "float", getCurrent().toString())
+        }
     }
 
     override fun <T> encodeSerializableValue(serializer: SerializationStrategy<T>, value: T) {
@@ -66,11 +66,11 @@ private sealed class AbstractJsonTreeOutput(
     }
 
     override fun encodeTaggedDouble(tag: String, value: Double) {
-        if (configuration.strictMode && !value.isFinite()) {
-            throw InvalidFloatingPoint(value, tag, "double")
-        }
-
+        // First encode value, then check, to have a prettier error message
         putElement(tag, JsonLiteral(value))
+        if (!configuration.serializeSpecialFloatingPointValues && !value.isFinite()) {
+            throw InvalidFloatingPoint(value, tag, "double", getCurrent().toString())
+        }
     }
 
     override fun encodeTaggedBoolean(tag: String, value: Boolean) = putElement(tag, JsonLiteral(value))
@@ -78,7 +78,7 @@ private sealed class AbstractJsonTreeOutput(
     override fun encodeTaggedString(tag: String, value: String) = putElement(tag, JsonLiteral(value))
     override fun encodeTaggedEnum(
         tag: String,
-        enumDescription: EnumDescriptor,
+        enumDescription: SerialDescriptor,
         ordinal: Int
     ) = putElement(tag, JsonLiteral(enumDescription.getElementName(ordinal)))
 
@@ -86,15 +86,15 @@ private sealed class AbstractJsonTreeOutput(
         putElement(tag, JsonLiteral(value.toString()))
     }
 
-    override fun beginStructure(desc: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeEncoder {
+    override fun beginStructure(descriptor: SerialDescriptor, vararg typeSerializers: KSerializer<*>): CompositeEncoder {
         val consumer =
             if (currentTagOrNull == null) nodeConsumer
             else { node -> putElement(currentTag, node) }
 
-        val encoder = when (desc.kind) {
-            StructureKind.LIST, UnionKind.POLYMORPHIC -> JsonTreeListOutput(json, consumer)
+        val encoder = when (descriptor.kind) {
+            StructureKind.LIST, is PolymorphicKind -> JsonTreeListOutput(json, consumer)
             StructureKind.MAP -> json.selectMapMode(
-                desc,
+                descriptor,
                 { JsonTreeMapOutput(json, consumer) },
                 { JsonTreeListOutput(json, consumer) }
             )
@@ -103,13 +103,13 @@ private sealed class AbstractJsonTreeOutput(
 
         if (writePolymorphic) {
             writePolymorphic = false
-            encoder.putElement(configuration.classDiscriminator, JsonPrimitive(desc.name))
+            encoder.putElement(configuration.classDiscriminator, JsonPrimitive(descriptor.serialName))
         }
 
         return encoder
     }
 
-    override fun endEncode(desc: SerialDescriptor) {
+    override fun endEncode(descriptor: SerialDescriptor) {
         nodeConsumer(getCurrent())
     }
 }
@@ -134,8 +134,9 @@ private class JsonPrimitiveOutput(json: Json, nodeConsumer: (JsonElement) -> Uni
         requireNotNull(content) { "Primitive element has not been recorded. Is call to .encodeXxx is missing in serializer?" }
 }
 
-private open class JsonTreeOutput(json: Json, nodeConsumer: (JsonElement) -> Unit) :
-    AbstractJsonTreeOutput(json, nodeConsumer) {
+private open class JsonTreeOutput(
+    json: Json, nodeConsumer: (JsonElement) -> Unit
+) : AbstractJsonTreeOutput(json, nodeConsumer) {
 
     protected val content: MutableMap<String, JsonElement> = linkedMapOf()
 
@@ -148,17 +149,19 @@ private open class JsonTreeOutput(json: Json, nodeConsumer: (JsonElement) -> Uni
 
 private class JsonTreeMapOutput(json: Json, nodeConsumer: (JsonElement) -> Unit) : JsonTreeOutput(json, nodeConsumer) {
     private lateinit var tag: String
+    private var isKey = true
 
     override fun putElement(key: String, element: JsonElement) {
-        val idx = key.toInt()
-        if (idx % 2 == 0) { // writing key
+        if (isKey) { // writing key
             tag = when (element) {
                 is JsonPrimitive -> element.content
-                is JsonObject -> throw JsonMapInvalidKeyKind(JsonObjectSerializer.descriptor)
-                is JsonArray -> throw JsonMapInvalidKeyKind(JsonArraySerializer.descriptor)
+                is JsonObject -> throw InvalidKeyKindException(JsonObjectSerializer.descriptor)
+                is JsonArray -> throw InvalidKeyKindException(JsonArraySerializer.descriptor)
             }
+            isKey = false
         } else {
             content[tag] = element
+            isKey = true
         }
     }
 
@@ -172,7 +175,7 @@ private class JsonTreeMapOutput(json: Json, nodeConsumer: (JsonElement) -> Unit)
 private class JsonTreeListOutput(json: Json, nodeConsumer: (JsonElement) -> Unit) :
     AbstractJsonTreeOutput(json, nodeConsumer) {
     private val array: ArrayList<JsonElement> = arrayListOf()
-    override fun elementName(desc: SerialDescriptor, index: Int): String = index.toString()
+    override fun elementName(descriptor: SerialDescriptor, index: Int): String = index.toString()
 
     override fun shouldWriteElement(desc: SerialDescriptor, tag: String, index: Int): Boolean = true
 
@@ -184,8 +187,7 @@ private class JsonTreeListOutput(json: Json, nodeConsumer: (JsonElement) -> Unit
     override fun getCurrent(): JsonElement = JsonArray(array)
 }
 
-@Suppress("USELESS_CAST") // Contracts does not work in K/N
-internal inline fun <reified T : JsonElement> cast(obj: JsonElement): T {
-    check(obj is T) { "Expected ${T::class} but found ${obj::class}" }
-    return obj as T
+internal inline fun <reified T : JsonElement> cast(value: JsonElement): T {
+    check(value is T) { "Expected ${T::class} but found ${value::class}" }
+    return value
 }

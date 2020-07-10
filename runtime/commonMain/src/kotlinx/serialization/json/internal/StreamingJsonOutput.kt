@@ -1,18 +1,21 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization.json.internal
 
 import kotlinx.serialization.*
-import kotlinx.serialization.internal.EnumDescriptor
+import kotlinx.serialization.builtins.*
 import kotlinx.serialization.json.*
-import kotlinx.serialization.modules.SerialModule
-import kotlin.jvm.JvmField
+import kotlinx.serialization.modules.*
+import kotlin.jvm.*
 
 
-internal class StreamingJsonOutput(private val composer: Composer, override val json: Json, private val mode: WriteMode,
-                                   private val modeReuseCache: Array<JsonOutput?>) : JsonOutput, ElementValueEncoder() {
+internal class StreamingJsonOutput(
+    private val composer: Composer, override val json: Json,
+    private val mode: WriteMode,
+    private val modeReuseCache: Array<JsonOutput?>
+) : JsonOutput, AbstractEncoder() {
 
     internal constructor(
         output: StringBuilder, json: Json, mode: WriteMode,
@@ -36,7 +39,7 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
         encodeSerializableValue(JsonElementSerializer, element)
     }
 
-    override fun shouldEncodeElementDefault(desc: SerialDescriptor, index: Int): Boolean {
+    override fun shouldEncodeElementDefault(descriptor: SerialDescriptor, index: Int): Boolean {
         return configuration.encodeDefaults
     }
 
@@ -51,11 +54,11 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
         encodeString(configuration.classDiscriminator)
         composer.print(COLON)
         composer.space()
-        encodeString(descriptor.name)
+        encodeString(descriptor.serialName)
     }
 
-    override fun beginStructure(desc: SerialDescriptor, vararg typeParams: KSerializer<*>): CompositeEncoder {
-        val newMode = json.switchMode(desc)
+    override fun beginStructure(descriptor: SerialDescriptor, vararg typeSerializers: KSerializer<*>): CompositeEncoder {
+        val newMode = json.switchMode(descriptor)
         if (newMode.begin != INVALID) { // entry
             composer.print(newMode.begin)
             composer.indent()
@@ -63,7 +66,7 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
 
         if (writePolymorphic) {
             writePolymorphic = false
-            encodeTypeInfo(desc)
+            encodeTypeInfo(descriptor)
         }
 
         if (mode == newMode) {
@@ -73,7 +76,7 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
         return modeReuseCache[newMode.ordinal] ?: StreamingJsonOutput(composer, json, newMode, modeReuseCache)
     }
 
-    override fun endStructure(desc: SerialDescriptor) {
+    override fun endStructure(descriptor: SerialDescriptor) {
         if (mode.end != INVALID) {
             composer.unIndent()
             composer.nextItem()
@@ -81,7 +84,7 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
         }
     }
 
-    override fun encodeElement(desc: SerialDescriptor, index: Int): Boolean {
+    override fun encodeElement(descriptor: SerialDescriptor, index: Int): Boolean {
         when (mode) {
             WriteMode.LIST -> {
                 if (!composer.writingFirst)
@@ -90,14 +93,14 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
             }
             WriteMode.MAP -> {
                 if (!composer.writingFirst) {
-                    if (index % 2 == 0) {
+                    forceQuoting = if (index % 2 == 0) {
                         composer.print(COMMA)
                         composer.nextItem() // indent should only be put after commas in map
-                        forceQuoting = true
+                        true
                     } else {
                         composer.print(COLON)
                         composer.space()
-                        forceQuoting = false
+                        false
                     }
                 } else {
                     forceQuoting = true
@@ -117,7 +120,7 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
                 if (!composer.writingFirst)
                     composer.print(COMMA)
                 composer.nextItem()
-                encodeString(desc.getElementName(index))
+                encodeString(descriptor.getElementName(index))
                 composer.print(COLON)
                 composer.space()
             }
@@ -150,19 +153,19 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
     }
 
     override fun encodeFloat(value: Float) {
-        if (configuration.strictMode && !value.isFinite()) {
-            throw InvalidFloatingPoint(value, "float")
-        }
-
+        // First encode value, then check, to have a prettier error message
         if (forceQuoting) encodeString(value.toString()) else composer.print(value)
+        if (!configuration.serializeSpecialFloatingPointValues && !value.isFinite()) {
+            throw InvalidFloatingPoint(value, "float", composer.sb.toString())
+        }
     }
 
     override fun encodeDouble(value: Double) {
-        if (configuration.strictMode && !value.isFinite()) {
-            throw InvalidFloatingPoint(value, "double")
-        }
-
+        // First encode value, then check, to have a prettier error message
         if (forceQuoting) encodeString(value.toString()) else composer.print(value)
+        if (!configuration.serializeSpecialFloatingPointValues && !value.isFinite()) {
+            throw InvalidFloatingPoint(value, "double", composer.sb.toString())
+        }
     }
 
     override fun encodeChar(value: Char) {
@@ -170,20 +173,15 @@ internal class StreamingJsonOutput(private val composer: Composer, override val 
     }
 
     override fun encodeString(value: String) {
-        if (configuration.unquoted && !shouldBeQuoted(value)) {
+        if (configuration.unquotedPrint && !shouldBeQuoted(value)) {
             composer.print(value)
         } else {
             composer.printQuoted(value)
         }
     }
 
-    override fun encodeEnum(enumDescription: EnumDescriptor, ordinal: Int) {
-        encodeString(enumDescription.getElementName(ordinal))
-    }
-
-    override fun encodeValue(value: Any) {
-        if (configuration.strictMode) super.encodeValue(value) else
-            encodeString(value.toString())
+    override fun encodeEnum(enumDescriptor: SerialDescriptor, index: Int) {
+        encodeString(enumDescriptor.getElementName(index))
     }
 
     internal class Composer(@JvmField internal val sb: StringBuilder, private val json: Json) {

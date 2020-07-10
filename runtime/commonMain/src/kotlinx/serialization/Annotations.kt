@@ -1,10 +1,10 @@
 /*
- * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
+ * Copyright 2017-2020 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
 
 package kotlinx.serialization
 
-import kotlin.reflect.KClass
+import kotlin.reflect.*
 
 /**
  * Instructs to use specific serializer for class, property or type argument.
@@ -37,7 +37,7 @@ public annotation class SerialName(val value: String)
  * Optional properties must have default values.
  */
 @Target(AnnotationTarget.PROPERTY)
-@Deprecated("All properties with default values are considered optional now")
+@Deprecated("All properties with default values are considered optional now", level = DeprecationLevel.ERROR)
 public annotation class Optional
 
 /**
@@ -99,3 +99,14 @@ public annotation class UseSerializers(vararg val serializerClasses: KClass<out 
  */
 @Target(AnnotationTarget.PROPERTY, AnnotationTarget.TYPE, AnnotationTarget.CLASS)
 public annotation class Polymorphic
+
+/**
+ * Public API marked with this annotation is effectively **internal**, which means
+ * it should not be used outside of `kotlinx.serialization`.
+ * Signature, semantics, source and binary compatibilities are not guaranteed for this API
+ * and will be changed without any warnings or migration aids.
+ * If you cannot avoid using internal API to solve your problem, please report your use-case to serialization's issue tracker.
+ */
+@Target(AnnotationTarget.CLASS, AnnotationTarget.PROPERTY, AnnotationTarget.FUNCTION, AnnotationTarget.TYPEALIAS)
+@RequiresOptIn(level = RequiresOptIn.Level.ERROR)
+public annotation class InternalSerializationApi

@@ -1,68 +1,58 @@
 /*
  * Copyright 2017-2019 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license.
  */
+@file:Suppress("DEPRECATION_ERROR")
 
 package kotlinx.serialization.modules
 
 import kotlinx.serialization.*
+import kotlinx.serialization.builtins.*
 import kotlinx.serialization.internal.*
-import kotlin.reflect.KClass
+import kotlin.reflect.*
 
 internal object StandardSubtypesOfAny {
     private val map: Map<KClass<*>, KSerializer<*>> = mapOf(
-        List::class to ArrayListSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            )
+        List::class to ListSerializer(
+            PolymorphicSerializer(Any::class).nullable
         ),
-        LinkedHashSet::class to LinkedHashSetSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            )
+        LinkedHashSet::class to SetSerializer(
+            PolymorphicSerializer(Any::class).nullable
         ),
         HashSet::class to HashSetSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            )
+            PolymorphicSerializer(Any::class).nullable
         ),
-        Set::class to LinkedHashSetSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            )
+        Set::class to SetSerializer(
+            PolymorphicSerializer(Any::class).nullable
         ),
         LinkedHashMap::class to LinkedHashMapSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            ), makeNullable(PolymorphicSerializer(Any::class))
+            PolymorphicSerializer(Any::class).nullable,
+            PolymorphicSerializer(Any::class).nullable
         ),
         HashMap::class to HashMapSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            ), makeNullable(PolymorphicSerializer(Any::class))
+            PolymorphicSerializer(Any::class).nullable,
+            PolymorphicSerializer(Any::class).nullable
         ),
         Map::class to LinkedHashMapSerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            ), makeNullable(PolymorphicSerializer(Any::class))
+            PolymorphicSerializer(Any::class).nullable,
+            PolymorphicSerializer(Any::class).nullable
         ),
         Map.Entry::class to MapEntrySerializer(
-            makeNullable(
-                PolymorphicSerializer(Any::class)
-            ), makeNullable(PolymorphicSerializer(Any::class))
+            PolymorphicSerializer(Any::class).nullable,
+            PolymorphicSerializer(Any::class).nullable
         ),
-        String::class to StringSerializer,
-        Char::class to CharSerializer,
-        Double::class to DoubleSerializer,
-        Float::class to FloatSerializer,
-        Long::class to LongSerializer,
-        Int::class to IntSerializer,
-        Short::class to ShortSerializer,
-        Byte::class to ByteSerializer,
-        Boolean::class to BooleanSerializer,
-        Unit::class to UnitSerializer
+        String::class to String.serializer(),
+        Char::class to Char.serializer(),
+        Int::class to Int.serializer(),
+        Byte::class to Byte.serializer(),
+        Short::class to Short.serializer(),
+        Long::class to Long.serializer(),
+        Double::class to Double.serializer(),
+        Float::class to Float.serializer(),
+        Boolean::class to Boolean.serializer(),
+        Unit::class to UnitSerializer()
     )
 
-    private val deserializingMap: Map<String, KSerializer<*>> = map.mapKeys { (_, s) -> s.descriptor.name }
+    private val deserializingMap: Map<String, KSerializer<*>> = map.mapKeys { (_, s) -> s.descriptor.serialName }
 
     @Suppress("UNCHECKED_CAST")
     internal fun getSubclassSerializer(objectToCheck: Any): KSerializer<*>? {

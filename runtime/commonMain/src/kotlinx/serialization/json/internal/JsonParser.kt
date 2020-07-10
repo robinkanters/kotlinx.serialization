@@ -6,7 +6,11 @@ package kotlinx.serialization.json.internal
 
 import kotlinx.serialization.json.*
 
-internal class JsonParser(private val reader: JsonReader) {
+internal class JsonParser(
+    configuration: JsonConfiguration,
+    private val reader: JsonReader
+) {
+    private val isLenient = configuration.isLenient
 
     private fun readObject(): JsonElement {
         reader.requireTokenClass(TC_BEGIN_OBJ) { "Expected start of the object" }
@@ -17,7 +21,7 @@ internal class JsonParser(private val reader: JsonReader) {
         var valueExpected = false
         while (reader.canBeginValue) {
             valueExpected = false
-            val key = reader.takeString()
+            val key = if (isLenient) reader.takeString() else reader.takeStringQuoted()
             reader.requireTokenClass(TC_COLON) { "Expected ':'" }
             reader.nextToken()
             val element = read()
@@ -33,11 +37,6 @@ internal class JsonParser(private val reader: JsonReader) {
         reader.require(!valueExpected && reader.tokenClass == TC_END_OBJ, reader.currentPosition) { "Expected end of the object" }
         reader.nextToken()
         return JsonObject(result)
-    }
-
-    private fun readValue(isString: Boolean): JsonElement {
-        val str = reader.takeString()
-        return JsonLiteral(str, isString)
     }
 
     private fun readArray(): JsonElement {
@@ -63,6 +62,15 @@ internal class JsonParser(private val reader: JsonReader) {
         reader.require(!valueExpected, reader.currentPosition) { "Unexpected trailing comma" }
         reader.nextToken()
         return JsonArray(result)
+    }
+
+    private fun readValue(isString: Boolean): JsonElement {
+        val str = if (isLenient) {
+            reader.takeString()
+        } else {
+            if (isString) reader.takeStringQuoted() else reader.takeString()
+        }
+        return JsonLiteral(str, isString)
     }
 
     fun read(): JsonElement {
